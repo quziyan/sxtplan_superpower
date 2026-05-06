@@ -1,7 +1,7 @@
-import { hash, verify, Algorithm } from '@node-rs/argon2'
+import { hash, verify } from '@node-rs/argon2'
 
 const HASH_OPTS = {
-  algorithm: Algorithm.Argon2id,
+  algorithm: 2 as const, // 2 = Argon2id (avoids const-enum import for isolatedModules compat)
   memoryCost: 19_456, // 19 MiB
   timeCost: 2,
   parallelism: 1,

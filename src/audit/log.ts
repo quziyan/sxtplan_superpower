@@ -14,13 +14,13 @@ export type AuditEntry = {
 
 export async function logAudit(db: Db, entry: AuditEntry) {
   await db.insert(operationAudit).values({
-    actorUserId: entry.actorUserId,
-    actorRoleKey: entry.actorRoleKey,
+    actorUserId: entry.actorUserId ?? null,
+    actorRoleKey: entry.actorRoleKey ?? null,
     targetKind: entry.targetKind,
-    targetId: entry.targetId,
+    targetId: entry.targetId ?? null,
     action: entry.action,
     before: entry.before === undefined ? null : (entry.before as object),
     after: entry.after === undefined ? null : (entry.after as object),
-    reason: entry.reason,
+    reason: entry.reason ?? null,
   })
 }
