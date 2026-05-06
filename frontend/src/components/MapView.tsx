@@ -1,7 +1,8 @@
+/// <reference types="vite/client" />
 import { useEffect, useRef } from 'react'
 import AMapLoader from '@amap/amap-jsapi-loader'
 
-const AMAP_KEY = import.meta.env.VITE_AMAP_API_KEY ?? ''
+const AMAP_KEY = (import.meta.env.VITE_AMAP_API_KEY as string | undefined) ?? ''
 
 export function MapView({ height = 280 }: { height?: number }) {
   const ref = useRef<HTMLDivElement>(null)
