@@ -12,6 +12,20 @@ const EnvSchema = z.object({
   DASHSCOPE_BASE_URL: z.string().url().optional(),
   DASHSCOPE_API_KEY: z.string().optional(),
   DASHSCOPE_MODEL: z.string().default('deepseek-v4-flash'),
+
+  // --- LLM ---
+  LLM_BASE_URL: z.string().url().default('https://dashscope.aliyuncs.com/compatible-mode/v1'),
+  LLM_API_KEY: z.string().default(''),
+  LLM_MODEL: z.string().default('deepseek-v4-flash'),
+  LLM_TIMEOUT_MS: z.coerce.number().int().positive().default(30000),
+
+  // --- News Search ---
+  SEARCH_API_KIND: z.enum(['mock', 'bing-news', 'rss', 'ddg', 'aggregator']).default('mock'),
+  SEARCH_API_KEY: z.string().default(''),
+  SEARCH_API_BASE_URL: z.string().url().default('https://api.bing.microsoft.com/v7.0/news/search'),
+
+  // --- 高德地理编码 ---
+  AMAP_GEOCODE_KEY: z.string().default(''),
 })
 
 export type Env = z.infer<typeof EnvSchema>
