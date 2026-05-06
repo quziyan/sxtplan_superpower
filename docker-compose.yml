@@ -1,0 +1,34 @@
+services:
+  postgres:
+    image: postgis/postgis:16-3.4
+    container_name: cnp-postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-cnp}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-cnp_dev}
+      POSTGRES_DB: ${POSTGRES_DB:-cnp}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - cnp-pg-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-cnp}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    container_name: cnp-redis
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - cnp-redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  cnp-pg-data:
+  cnp-redis-data:
