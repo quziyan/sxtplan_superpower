@@ -36,6 +36,13 @@
       "when": 1778060817285,
       "tag": "0004_amusing_toxin",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1778061051443,
+      "tag": "0005_white_zaladane",
+      "breakpoints": true
     }
   ]
 }
