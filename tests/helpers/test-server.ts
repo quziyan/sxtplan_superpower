@@ -2,6 +2,7 @@ import { Hono } from 'hono'
 import type { ContentfulStatusCode } from 'hono/utils/http-status'
 import { authRoutes } from '@/auth/routes'
 import { regionRoutes } from '@/modules/region/routes'
+import { taxonomyRoutes } from '@/modules/taxonomy/routes'
 import { AppError } from '@/lib/errors'
 import type { Db } from '@/db/client'
 
@@ -16,5 +17,6 @@ export function buildTestApp(db: Db) {
   })
   app.route('/auth', authRoutes(db))
   app.route('/regions', regionRoutes(db))
+  app.route('/taxonomy', taxonomyRoutes(db))
   return app
 }
