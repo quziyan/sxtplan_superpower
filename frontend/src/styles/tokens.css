@@ -1,0 +1,80 @@
+/* ===== Camera-News Prediction System — Design Tokens ===== */
+
+:root {
+  /* Brand: 政务沉稳蓝灰，工作台数据语义 */
+  --c-bg:           #0e131a;
+  --c-bg-1:         #131a23;
+  --c-bg-2:         #181f2b;
+  --c-panel:        #1b2331;
+  --c-panel-2:      #222b3c;
+  --c-line:         #2a3445;
+  --c-line-strong:  #3a4860;
+  --c-text:         #e7ecf2;
+  --c-text-2:       #aab4c4;
+  --c-text-3:       #6f7d92;
+  --c-mute:         #4a5568;
+
+  --c-accent:       #4ea3ff;       /* 政务蓝 */
+  --c-accent-2:     #2b86e6;
+  --c-accent-soft:  rgba(78,163,255,0.12);
+
+  --c-ok:           #38c986;
+  --c-ok-soft:      rgba(56,201,134,0.12);
+  --c-warn:         #f5b14f;
+  --c-warn-soft:    rgba(245,177,79,0.13);
+  --c-bad:          #ef5b5b;
+  --c-bad-soft:     rgba(239,91,91,0.13);
+  --c-info:         #8b6dff;
+  --c-info-soft:    rgba(139,109,255,0.13);
+  --c-cyan:         #4ed7d8;
+
+  /* confidence semantic */
+  --c-conf-low:    #ef5b5b;
+  --c-conf-mid:    #f5b14f;
+  --c-conf-high:   #38c986;
+
+  /* Outcome */
+  --c-hit:        #38c986;
+  --c-miss:       #ef5b5b;
+  --c-nodata:     #8898a8;
+
+  /* Type */
+  --ff-sans: "Inter Tight", "PingFang SC", "Microsoft YaHei", "SF Pro Text", system-ui, -apple-system, sans-serif;
+  --ff-mono: "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace;
+  --ff-num:  "Inter Tight", "JetBrains Mono", monospace;
+
+  /* Spacing */
+  --sp-1: 4px; --sp-2: 8px; --sp-3: 12px; --sp-4: 16px;
+  --sp-5: 20px; --sp-6: 24px; --sp-7: 32px; --sp-8: 40px;
+
+  --rad-1: 4px; --rad-2: 6px; --rad-3: 8px; --rad-4: 12px;
+
+  --shadow-1: 0 1px 0 rgba(255,255,255,0.03), 0 8px 24px -12px rgba(0,0,0,0.6);
+  --shadow-2: 0 1px 0 rgba(255,255,255,0.04), 0 18px 40px -16px rgba(0,0,0,0.7);
+}
+
+/* Light theme — for tweaks */
+[data-theme="light"] {
+  --c-bg:           #f3f5f9;
+  --c-bg-1:         #ffffff;
+  --c-bg-2:         #f8fafc;
+  --c-panel:        #ffffff;
+  --c-panel-2:      #f1f5fb;
+  --c-line:         #e3e8ef;
+  --c-line-strong:  #c7d0dc;
+  --c-text:         #1c2434;
+  --c-text-2:       #4a5568;
+  --c-text-3:       #76839a;
+  --c-mute:         #94a0b3;
+  --c-accent:       #2b6ad1;
+  --c-accent-2:     #1e549c;
+  --c-accent-soft:  rgba(43,106,209,0.10);
+  --c-ok:           #1f9d63;
+  --c-ok-soft:      rgba(31,157,99,0.10);
+  --c-warn:         #c9851a;
+  --c-warn-soft:    rgba(201,133,26,0.10);
+  --c-bad:          #c93b3b;
+  --c-bad-soft:     rgba(201,59,59,0.10);
+  --c-info:         #6b4ae2;
+  --c-info-soft:    rgba(107,74,226,0.10);
+}

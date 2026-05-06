@@ -1,1 +1,33 @@
-/* placeholder — Task 21' ports tokens + globals + components.css from prototype */
+@import './tokens.css';
+@import './components.css';
+
+* { box-sizing: border-box; }
+html, body, #root { height: 100%; margin: 0; }
+body {
+  font-family: var(--ff-sans);
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--c-text);
+  background: var(--c-bg);
+  -webkit-font-smoothing: antialiased;
+  font-feature-settings: "tnum" 1, "ss01" 1;
+}
+
+button { font-family: inherit; cursor: pointer; border: 0; background: transparent; color: inherit; }
+input, select, textarea { font-family: inherit; font-size: inherit; }
+::selection { background: var(--c-accent-soft); color: var(--c-text); }
+
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--c-line); border-radius: 6px; border: 2px solid var(--c-bg); }
+::-webkit-scrollbar-thumb:hover { background: var(--c-line-strong); }
+
+[data-density="compact"] .table th,
+[data-density="compact"] .table td { padding: 6px var(--sp-4); }
+[data-density="compact"] .inbox-card { padding: var(--sp-4); }
+[data-density="compact"] .kpi { padding: var(--sp-3); }
