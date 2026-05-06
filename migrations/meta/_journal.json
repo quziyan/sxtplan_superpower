@@ -43,6 +43,13 @@
       "when": 1778061051443,
       "tag": "0005_white_zaladane",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1778061280382,
+      "tag": "0006_ambiguous_blob",
+      "breakpoints": true
     }
   ]
 }
