@@ -233,8 +233,10 @@ frontend/node_modules/
 
 - [ ] **Step 5: Verify bootstrap**
 
-Run: `bun install && bunx tsc --noEmit`
-Expected: no errors (empty src is fine — tsc just validates config).
+Run: `bun install`
+Expected: succeeds(空 lockfile 或无包均可)。
+
+> ℹ️ **不在 Task 1 跑 `bunx tsc --noEmit`** — `tsconfig.json` 引用了 `bun-types`,但要等 Task 2 安装才能通过;空 src 也会触发 `TS18003 No inputs were found`。typecheck 验证移到 Task 2 末尾(那时 deps 已就位 + 还是没源文件,所以最早能 typecheck 的时刻是 Task 4 创建 `src/env.ts` 之后)。
 
 - [ ] **Step 6: Commit**
 
@@ -273,7 +275,9 @@ bun add -d drizzle-kit@^0.28.0 \
 - [ ] **Step 3: Verify install**
 
 Run: `bun install`
-Expected: lockfile written, no errors.
+Expected: lockfile written, no errors。
+
+> ℹ️ 此时仍**不能** `bunx tsc --noEmit` —— `tsconfig.json` 的 `include` 是 `src/**/*` 但 src 目录不存在,会 `TS18003 No inputs were found`。typecheck 第一次能跑通是 Task 4 创建 `src/env.ts` 之后。
 
 - [ ] **Step 4: Commit**
 
