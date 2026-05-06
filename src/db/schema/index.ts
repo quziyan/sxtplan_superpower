@@ -2,3 +2,4 @@
 export * from './user'
 export * from './region'
 export * from './taxonomy'
+export * from './audit'
