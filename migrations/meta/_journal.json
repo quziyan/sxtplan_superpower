@@ -15,6 +15,13 @@
       "when": 1778051848649,
       "tag": "0001_charming_quasar",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1778052269478,
+      "tag": "0002_new_grim_reaper",
+      "breakpoints": true
     }
   ]
 }
