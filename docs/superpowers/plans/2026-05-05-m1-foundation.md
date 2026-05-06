@@ -2560,6 +2560,12 @@ git commit -m "feat(server): hono bootstrap + health + error handler + JSON logg
 
 ### Section 7 — Frontend Scaffold
 
+> ⚠️ **SUPERSEDED — 2026-05-06**: 本节(Tasks 20–24)被 [`2026-05-06-m1-foundation-frontend-addendum.md`](./2026-05-06-m1-foundation-frontend-addendum.md) 替代。
+>
+> **原因:** 用户提供了 Claude Design 原型(`./sxt-superpower-claudedesign/`),前端实现需按此原型延续。原方案的 Tailwind + 简单 RoleSwitcher 与原型(纯 CSS + 设计 tokens + 富 role tabs + 三视图骨架)不兼容。
+>
+> **执行时:** 跳过本节 Tasks 20–24,改执行 addendum 的 Tasks 20'–29'。后端 §1–§6 + §8 不变。
+
 #### Task 20: Frontend init (Vite + React + TS + Tailwind)
 
 **Files:**
