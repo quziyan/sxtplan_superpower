@@ -5,6 +5,7 @@ import {
   MockSearchAdapter,
   RssSearchAdapter,
   getSearchAdapter,
+  resetSearchAdapterPoolForTests,
 } from '@/news/search-adapter'
 import { NotImplementedError } from '@/news/types'
 import { resetEnvCacheForTests } from '@/env'
@@ -30,6 +31,7 @@ describe('SearchAdapter', () => {
 
   test('getSearchAdapter() factory respects SEARCH_API_KIND=mock by default', () => {
     resetEnvCacheForTests()
+    resetSearchAdapterPoolForTests()
     process.env.SEARCH_API_KIND = 'mock'
     const a = getSearchAdapter()
     expect(a.kind).toBe('mock')
@@ -37,9 +39,42 @@ describe('SearchAdapter', () => {
 
   test('getSearchAdapter() returns rss adapter when configured', () => {
     resetEnvCacheForTests()
+    resetSearchAdapterPoolForTests()
     process.env.SEARCH_API_KIND = 'rss'
     const a = getSearchAdapter()
     expect(a.kind).toBe('rss')
+  })
+
+  // au-T7 retrofit: makePool now caches the active SearchAdapter.
+  test('getSearchAdapter() caches the pool — repeat calls return same reference', () => {
+    resetEnvCacheForTests()
+    resetSearchAdapterPoolForTests()
+    process.env.SEARCH_API_KIND = 'mock'
+    const a1 = getSearchAdapter()
+    const a2 = getSearchAdapter()
+    expect(a2).toBe(a1)
+    expect(a1.kind).toBe('mock')
+  })
+
+  // au-T7 retrofit: resetSearchAdapterPoolForTests() lets a SEARCH_API_KIND
+  // change take effect; without the reset, the cached pool would keep returning mock.
+  test('resetSearchAdapterPoolForTests() lets SEARCH_API_KIND change take effect', () => {
+    resetEnvCacheForTests()
+    resetSearchAdapterPoolForTests()
+    process.env.SEARCH_API_KIND = 'mock'
+    const before = getSearchAdapter()
+    expect(before.kind).toBe('mock')
+
+    // Mutate env without reset → still mock (cache wins).
+    resetEnvCacheForTests()
+    process.env.SEARCH_API_KIND = 'rss'
+    expect(getSearchAdapter().kind).toBe('mock')
+
+    // Now reset → next call rebuilds pool with new env.
+    resetSearchAdapterPoolForTests()
+    const after = getSearchAdapter()
+    expect(after.kind).toBe('rss')
+    expect(after).toBeInstanceOf(RssSearchAdapter)
   })
 
   // RSS XML parser — pure unit test on parseRssItems via crafted XML

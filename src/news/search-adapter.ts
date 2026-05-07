@@ -1,9 +1,11 @@
 import { loadEnv } from '@/env'
+import { makePool, type Pool } from '@/integrations/external-adapter'
 import type { SearchAdapter, SearchHit, SearchOpts } from './types'
 import { NotImplementedError } from './types'
 
 class MockSearchAdapter implements SearchAdapter {
   readonly kind = 'mock' as const
+  readonly key = 'mock'
   async query(keywords: string[]): Promise<SearchHit[]> {
     return [{
       url: `https://mock.example/${encodeURIComponent(keywords.join('-'))}-${Date.now()}`,
@@ -17,6 +19,7 @@ class MockSearchAdapter implements SearchAdapter {
 
 class BingNewsSearchAdapter implements SearchAdapter {
   readonly kind = 'bing-news' as const
+  readonly key = 'bing-news'
   async query(keywords: string[], opts: SearchOpts = {}): Promise<SearchHit[]> {
     const env = loadEnv()
     if (!env.SEARCH_API_KEY) throw new Error('SEARCH_API_KEY not set for bing-news')
@@ -45,6 +48,7 @@ class BingNewsSearchAdapter implements SearchAdapter {
 
 class RssSearchAdapter implements SearchAdapter {
   readonly kind = 'rss' as const
+  readonly key = 'rss'
 
   // 默认订阅源(EX-3 中文主流):新华社、人民网;m4 由配置驱动可插拔
   private readonly feeds: Array<{ url: string; name: string; kind: SearchHit['source']['kind'] }> = [
@@ -102,6 +106,7 @@ class RssSearchAdapter implements SearchAdapter {
 
 class DdgSearchAdapter implements SearchAdapter {
   readonly kind = 'ddg' as const
+  readonly key = 'ddg'
   async query(): Promise<SearchHit[]> {
     throw new NotImplementedError('ddg')
   }
@@ -109,21 +114,67 @@ class DdgSearchAdapter implements SearchAdapter {
 
 class AggregatorSearchAdapter implements SearchAdapter {
   readonly kind = 'aggregator' as const
+  readonly key = 'aggregator'
   async query(): Promise<SearchHit[]> {
     throw new NotImplementedError('aggregator')
   }
 }
 
-export function getSearchAdapter(): SearchAdapter {
+/**
+ * SearchAdapter pool — retrofitted onto `makePool` (au-T7).
+ *
+ * Single-flight selection: env.SEARCH_API_KIND picks ONE active adapter.
+ * Different from Camera (Map-registry shape with multiple adapters live
+ * side-by-side); same shape as legacy m2 switch-factory it replaces.
+ *
+ * Public surface preserved verbatim:
+ *   - `getSearchAdapter()` — returns the env-selected SearchAdapter.
+ *
+ * New helper:
+ *   - `resetSearchAdapterPoolForTests()` — clears the cached pool so tests
+ *     can mutate `process.env.SEARCH_API_KIND` between cases. (Pre-retrofit
+ *     `getSearchAdapter()` was fresh-per-call, so tests didn't need it; the
+ *     retrofit caches via `makePool`, hence this escape hatch.)
+ *
+ * Lazy init by design: the pool is built on first `getSearchAdapter()` call.
+ * NO module-load auto-init — that would force `loadEnv()` at import time,
+ * which the m2 design explicitly avoided.
+ */
+
+let _pool: Pool<SearchAdapter> | null = null
+
+const SEARCH_FACTORIES: Record<string, () => SearchAdapter> = {
+  mock:         () => new MockSearchAdapter(),
+  'bing-news':  () => new BingNewsSearchAdapter(),
+  rss:          () => new RssSearchAdapter(),
+  ddg:          () => new DdgSearchAdapter(),
+  aggregator:   () => new AggregatorSearchAdapter(),
+}
+
+const VALID_SEARCH_KEYS = new Set(Object.keys(SEARCH_FACTORIES))
+
+function _initSearchPool(): Pool<SearchAdapter> {
   const env = loadEnv()
-  switch (env.SEARCH_API_KIND) {
-    case 'bing-news': return new BingNewsSearchAdapter()
-    case 'rss': return new RssSearchAdapter()
-    case 'ddg': return new DdgSearchAdapter()
-    case 'aggregator': return new AggregatorSearchAdapter()
-    case 'mock':
-    default: return new MockSearchAdapter()
-  }
+  // env.SEARCH_API_KIND is a zod enum — already validated. The Set check is
+  // defense-in-depth in case the schema ever drifts from the factories.
+  const defaultKey = VALID_SEARCH_KEYS.has(env.SEARCH_API_KIND) ? env.SEARCH_API_KIND : 'mock'
+  const pool = makePool<SearchAdapter>({ factories: SEARCH_FACTORIES, defaultKey })
+  pool.init()
+  return pool
+}
+
+export function getSearchAdapter(): SearchAdapter {
+  if (!_pool) _pool = _initSearchPool()
+  return _pool.getDefault()
+}
+
+/**
+ * Test helper: clears the cached pool so the next `getSearchAdapter()` call
+ * re-reads env. Pair with `resetEnvCacheForTests()` + `process.env` mutation
+ * to switch the active adapter mid-suite. Production code should never call this.
+ */
+export function resetSearchAdapterPoolForTests(): void {
+  _pool = null
 }
 
 // Export classes for direct testing
