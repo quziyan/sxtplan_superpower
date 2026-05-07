@@ -37,6 +37,7 @@ const EnvSchema = z.object({
   SIMULATED_GZP_FAKE_MEDIA_BASE: z.string().url().default('http://localhost:3000/static/sim-media/'),
 
   // --- 阿里云 OSS (m3, EX-6) ---
+  OSS_ADAPTER_KEY: z.enum(['mock', 'aliyun']).default('mock'),
   OSS_ENDPOINT: z.string().default('https://oss-cn-shenzhen.aliyuncs.com'),
   OSS_ACCESS_KEY_ID: z.string().default(''),
   OSS_ACCESS_KEY_SECRET: z.string().default(''),

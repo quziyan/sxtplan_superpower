@@ -9,6 +9,7 @@ import { predictionRoutes } from '@/modules/prediction/routes'
 import { retrospectiveRoutes } from '@/modules/retrospective/routes'
 import { webhookRoutes } from '@/webhook/routes'
 import { AppError } from '@/lib/errors'
+import { getOssAdapter } from '@/media/oss-adapter-pool'
 import type { Db } from '@/db/client'
 
 const PLACEHOLDER_JPG = Buffer.from(
@@ -28,6 +29,20 @@ export function buildTestApp(db: Db) {
   app.get('/static/sim-media/:filename', (c) => {
     c.header('Content-Type', 'image/jpeg')
     return c.body(PLACEHOLDER_JPG)
+  })
+  app.get('/static/mock-oss/:key', async (c) => {
+    const adapter = getOssAdapter()
+    if (adapter.key !== 'mock') {
+      return c.json({ error: 'mock OSS not active' }, 404)
+    }
+    const decodedKey = decodeURIComponent(c.req.param('key'))
+    try {
+      const stream = await adapter.getStream(decodedKey)
+      c.header('Content-Type', 'image/jpeg')
+      return c.body(stream as unknown as ReadableStream)
+    } catch (e) {
+      return c.json({ error: (e as Error).message }, 404)
+    }
   })
   app.route('/auth', authRoutes(db))
   app.route('/regions', regionRoutes(db))

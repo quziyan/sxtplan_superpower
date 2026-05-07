@@ -14,6 +14,7 @@ import { createDb } from '@/db/client'
 import { loadEnv } from '@/env'
 import { AppError } from '@/lib/errors'
 import { logger } from '@/lib/logger'
+import { getOssAdapter } from '@/media/oss-adapter-pool'
 
 const env = loadEnv()
 const { db } = createDb('app')
@@ -52,6 +53,24 @@ const PLACEHOLDER_JPG = Buffer.from(
 app.get('/static/sim-media/:filename', (c) => {
   c.header('Content-Type', 'image/jpeg')
   return c.body(PLACEHOLDER_JPG)
+})
+
+// Static dev endpoint backing MockOssAdapter.signedUrl. Only active when
+// OSS_ADAPTER_KEY=mock — production aliyun config gets a 404 so a stray
+// request can't accidentally probe internal storage layout.
+app.get('/static/mock-oss/:key', async (c) => {
+  const adapter = getOssAdapter()
+  if (adapter.key !== 'mock') {
+    return c.json({ error: 'mock OSS not active' }, 404)
+  }
+  const decodedKey = decodeURIComponent(c.req.param('key'))
+  try {
+    const stream = await adapter.getStream(decodedKey)
+    c.header('Content-Type', 'image/jpeg')
+    return c.body(stream as unknown as ReadableStream)
+  } catch (e) {
+    return c.json({ error: (e as Error).message }, 404)
+  }
 })
 
 app.route('/auth', authRoutes(db))
