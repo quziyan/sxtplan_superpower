@@ -2,6 +2,7 @@ import { loadEnv } from '@/env'
 import { makePool, type Pool } from '@/integrations/external-adapter'
 import type { SearchAdapter, SearchHit, SearchOpts } from './types'
 import { NotImplementedError } from './types'
+import { GovGdProvinceAdapter } from './adapters/gov-gd-province'
 
 class MockSearchAdapter implements SearchAdapter {
   readonly kind = 'mock' as const
@@ -195,11 +196,15 @@ class AggregatorSearchAdapter implements SearchAdapter {
 let _pool: Pool<SearchAdapter> | null = null
 
 const SEARCH_FACTORIES: Record<string, () => SearchAdapter> = {
-  mock:         () => new MockSearchAdapter(),
-  'bing-news':  () => new BingNewsSearchAdapter(),
-  rss:          () => new RssSearchAdapter(),
-  ddg:          () => new DdgSearchAdapter(),
-  aggregator:   () => new AggregatorSearchAdapter(),
+  mock:               () => new MockSearchAdapter(),
+  'bing-news':        () => new BingNewsSearchAdapter(),
+  rss:                () => new RssSearchAdapter(),
+  ddg:                () => new DdgSearchAdapter(),
+  aggregator:         () => new AggregatorSearchAdapter(),
+  // Gov-site scrapers (Plan-D Tasks 13-15, A2-γ). Opt-in via GOV_SCRAPER_ENABLED.
+  // Listed in factories so tests / direct lookups can resolve them; only added
+  // to `alsoRegister` (below) when env flag is `'true'`.
+  'gov-gd-province':  () => new GovGdProvinceAdapter(),
 }
 
 const VALID_SEARCH_KEYS = new Set(Object.keys(SEARCH_FACTORIES))
@@ -209,7 +214,18 @@ function _initSearchPool(): Pool<SearchAdapter> {
   // env.SEARCH_API_KIND is a zod enum — already validated. The Set check is
   // defense-in-depth in case the schema ever drifts from the factories.
   const defaultKey = VALID_SEARCH_KEYS.has(env.SEARCH_API_KIND) ? env.SEARCH_API_KIND : 'mock'
-  const pool = makePool<SearchAdapter>({ factories: SEARCH_FACTORIES, defaultKey })
+  const alsoRegister: string[] = []
+  // Gov scrapers (Plan-D Tasks 13-15, A2-γ) are opt-in: only registered into the
+  // active pool when `GOV_SCRAPER_ENABLED=true`. Mirrors the `simulated-gzp`
+  // pattern in src/dispatch/adapter-pool.ts.
+  if (env.GOV_SCRAPER_ENABLED === 'true') {
+    alsoRegister.push('gov-gd-province')
+  }
+  const pool = makePool<SearchAdapter>({
+    factories: SEARCH_FACTORIES,
+    defaultKey,
+    ...(alsoRegister.length > 0 ? { alsoRegister } : {}),
+  })
   pool.init()
   return pool
 }
