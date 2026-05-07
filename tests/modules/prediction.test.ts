@@ -1,9 +1,14 @@
-import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
+import { afterAll, beforeAll, describe, expect, mock, test } from 'bun:test'
+import { Hono } from 'hono'
 import { sql, eq } from 'drizzle-orm'
 import { hashPassword } from '@/auth/password'
 import { roles, userRoles, users } from '@/db/schema/user'
 import { vehicleClasses, taskClasses } from '@/db/schema/taxonomy'
 import { predictions } from '@/db/schema/prediction'
+import { authRoutes } from '@/auth/routes'
+import { predictionRoutes } from '@/modules/prediction/routes'
+import { AppError } from '@/lib/errors'
+import type { ContentfulStatusCode } from 'hono/utils/http-status'
 import { buildTestApp } from '../helpers/test-server'
 import { createTestDb } from '../helpers/test-db'
 
@@ -222,5 +227,103 @@ describe('prediction routes', () => {
     const body = await res.json() as { ok: boolean; prediction: { status: string } }
     expect(body.ok).toBe(true)
     expect(body.prediction.status).toBe('REJECTED')
+  })
+})
+
+/**
+ * Plan-C T16 / ISC-24: post-approval trigger wiring.
+ *
+ * The approve route should fire `triggerDispatchAfterApproval(predictionId)`
+ * after the status transition is committed. We verify this via the route's
+ * DI seam: build a parallel test app that injects a spy trigger function,
+ * then drive it through HTTP and assert the spy was called with the right id.
+ *
+ * Trigger failure must NOT poison the approve response — there's a
+ * dedicated test for that path too.
+ */
+describe('approve route → post-approval dispatch trigger', () => {
+  function buildAppWithDeps(
+    db: ReturnType<typeof createTestDb> extends Promise<infer T>
+      ? T extends { db: infer D } ? D : never
+      : never,
+    triggerSpy: (predictionId: string) => Promise<void>,
+  ) {
+    const app = new Hono()
+    app.onError((err, c) => {
+      if (err instanceof AppError) {
+        return c.json({ error: { code: err.code, message: err.message } }, err.status as ContentfulStatusCode)
+      }
+      return c.json({ error: { code: 'INTERNAL', message: 'internal error' } }, 500)
+    })
+    app.route('/auth', authRoutes(db))
+    app.route('/predictions', predictionRoutes(db, { triggerDispatchAfterApproval: triggerSpy }))
+    return app
+  }
+
+  async function seedPropsedPrediction(stamp: string): Promise<string> {
+    const reg = (await ctx.db.execute<{ id: string; version: number }>(sql`
+      INSERT INTO regions (kind, name, version, geom)
+      VALUES ('AD_HOC', ${'trig-region-' + stamp}, 1, ST_GeomFromGeoJSON(${JSON.stringify(poly)}))
+      RETURNING id, version
+    `))[0]!
+    const [vc] = await ctx.db.insert(vehicleClasses).values({ name: `vc-trig-${stamp}`, level: 1 }).returning()
+    const [tc] = await ctx.db.insert(taskClasses).values({ name: `tc-trig-${stamp}`, level: 1 }).returning()
+    const [p] = await ctx.db.insert(predictions).values({
+      sourceKind: 'WATCHLIST',
+      sourceId: vc!.id,
+      regionId: reg.id,
+      regionVersion: reg.version,
+      windowDate: new Date('2026-08-15'),
+      windowHalf: 'AM',
+      vehicleClassId: vc!.id,
+      taskClassId: tc!.id,
+      kDays: 7,
+      expiresAt: new Date(Date.now() + 7 * 86400_000),
+    }).returning()
+    return p!.id
+  }
+
+  test('approve as DECIDER fires post-approval trigger with the prediction id', async () => {
+    const stamp = `trig-ok-${Date.now()}`
+    const id = await seedPropsedPrediction(stamp)
+    const calls: string[] = []
+    const spy = mock(async (predictionId: string) => {
+      calls.push(predictionId)
+    })
+
+    const app = buildAppWithDeps(ctx.db, spy)
+    const res = await app.request(`/predictions/${id}/approve`, {
+      method: 'POST',
+      headers: { cookie: deciderCookie },
+    })
+
+    expect(res.status).toBe(200)
+    const body = await res.json() as { ok: boolean; prediction: { status: string } }
+    expect(body.ok).toBe(true)
+    expect(body.prediction.status).toBe('APPROVED')
+    expect(spy).toHaveBeenCalledTimes(1)
+    expect(calls).toEqual([id])
+  })
+
+  test('trigger failure does NOT poison the approve response (still 200)', async () => {
+    const stamp = `trig-fail-${Date.now()}`
+    const id = await seedPropsedPrediction(stamp)
+    const failingSpy = mock(async (_predictionId: string) => {
+      throw new Error('redis kaboom')
+    })
+
+    const app = buildAppWithDeps(ctx.db, failingSpy)
+    const res = await app.request(`/predictions/${id}/approve`, {
+      method: 'POST',
+      headers: { cookie: deciderCookie },
+    })
+
+    // Approve must succeed — the prediction is already APPROVED in the DB,
+    // and the dispatch can be retried out-of-band.
+    expect(res.status).toBe(200)
+    const body = await res.json() as { ok: boolean; prediction: { status: string } }
+    expect(body.ok).toBe(true)
+    expect(body.prediction.status).toBe('APPROVED')
+    expect(failingSpy).toHaveBeenCalledTimes(1)
   })
 })

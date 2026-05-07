@@ -5,6 +5,7 @@ import type { Db } from '@/db/client'
 import { authRequired, roleRequired, type AuthContext } from '@/auth/middleware'
 import { logAudit } from '@/audit/log'
 import { BadRequest, NotFound } from '@/lib/errors'
+import { triggerDispatchAfterApproval } from '@/scheduler/triggers/post-approval'
 import { writeConfidenceSnapshot } from './confidence'
 import { getPrediction, getSnapshots, listPredictions, transitionStatus } from './service'
 
@@ -17,7 +18,18 @@ const manualConfSchema = z.object({
 
 type Vars = { auth: AuthContext }
 
-export function predictionRoutes(db: Db) {
+/**
+ * Optional dependency-injection seam for the route module. The post-
+ * approval trigger fires the dispatch queue job; tests inject a mock to
+ * verify the trigger fires (and to avoid hitting Redis). Production
+ * callers omit and the default `triggerDispatchAfterApproval` is used.
+ */
+export type PredictionRouteDeps = {
+  triggerDispatchAfterApproval?: (predictionId: string) => Promise<void>
+}
+
+export function predictionRoutes(db: Db, deps: PredictionRouteDeps = {}) {
+  const triggerDispatch = deps.triggerDispatchAfterApproval ?? triggerDispatchAfterApproval
   const app = new Hono<{ Variables: Vars }>()
 
   app.get('/', authRequired(db), async (c) => {
@@ -50,6 +62,15 @@ export function predictionRoutes(db: Db) {
     }
     if (auth.activeRoleKey !== null) approveEntry.actorRoleKey = auth.activeRoleKey
     await logAudit(db, approveEntry)
+    // Plan-C T16 / ISC-24: fire post-approval dispatch trigger asynchronously.
+    // Wrapped in try/catch so a queue/Redis hiccup does NOT poison the
+    // approve response — the prediction is already APPROVED in the DB,
+    // and the dispatch job can be retried out-of-band.
+    try {
+      await triggerDispatch(id)
+    } catch (err) {
+      console.error(`[prediction] post-approval dispatch trigger failed for ${id}:`, err)
+    }
     return c.json({ ok: true, prediction: after })
   })
 
