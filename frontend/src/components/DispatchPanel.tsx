@@ -1,13 +1,18 @@
 import type { DispatchTaskWithMedia } from '@/lib/prediction-api'
 import type { DispatchState } from '@/lib/dispatch-api'
+import { CancelButton } from './CancelButton'
 import { MediaGallery } from './MediaGallery'
 
-// Plan-C T27 / ISC-35: dispatch records list, embedded in PredictionDetail.
-// Each row shows the dispatch's adapter + external id + state, then nests
-// the per-dispatch MediaGallery underneath.
+// Plan-C T27 / ISC-35 + T28 / ISC-36: dispatch records list, embedded in
+// PredictionDetail. Each row shows the dispatch's adapter + external id +
+// state, then nests the per-dispatch MediaGallery and (when the row is
+// cancellable) a CancelButton.
 //
-// onCancel is wired up by T28 (CancelButton). Until then it's optional and
-// callers may omit it.
+// `onMutated` is the post-mutation hook: callers should refetch the
+// PredictionDetail payload when it fires, since cancel transitions the
+// dispatch state and therefore the row UI. Named `onMutated` (not `onCancel`)
+// because it covers any state change a child triggers — we anticipate
+// future child mutations (retry, resend) using the same callback.
 
 const STATE_LABELS: Record<DispatchState, string> = {
   QUEUED: '排队中',
@@ -39,11 +44,10 @@ function formatTs(iso: string): string {
 
 export function DispatchPanel({
   dispatches,
+  onMutated,
 }: {
   dispatches: DispatchTaskWithMedia[]
-  // T28 will wire CancelButton through this; keeping the prop in the public
-  // shape now means T28 won't have to renegotiate the interface.
-  onCancel?: (predictionId: string) => void
+  onMutated?: () => void
 }) {
   if (dispatches.length === 0) {
     return (
@@ -62,6 +66,11 @@ export function DispatchPanel({
             <code className="id-cell">{d.adapterKey}</code>
             <span className="id-cell">{d.externalId ?? '(待派发)'}</span>
             <span className="text-muted">{formatTs(d.createdAt)}</span>
+            <CancelButton
+              predictionId={d.predictionId}
+              dispatchState={d.state}
+              onCancelled={onMutated}
+            />
           </div>
           <MediaGallery mediaAssets={d.mediaAssets} />
         </div>
