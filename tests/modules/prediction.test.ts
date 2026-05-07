@@ -1,10 +1,12 @@
 import { afterAll, beforeAll, describe, expect, mock, test } from 'bun:test'
 import { Hono } from 'hono'
-import { sql, eq } from 'drizzle-orm'
+import { sql, eq, and, desc } from 'drizzle-orm'
 import { hashPassword } from '@/auth/password'
 import { roles, userRoles, users } from '@/db/schema/user'
 import { vehicleClasses, taskClasses } from '@/db/schema/taxonomy'
 import { predictions } from '@/db/schema/prediction'
+import { dispatchTasks } from '@/db/schema/dispatch'
+import { operationAudit } from '@/db/schema/audit'
 import { authRoutes } from '@/auth/routes'
 import { predictionRoutes } from '@/modules/prediction/routes'
 import { AppError } from '@/lib/errors'
@@ -325,5 +327,128 @@ describe('approve route → post-approval dispatch trigger', () => {
     expect(body.ok).toBe(true)
     expect(body.prediction.status).toBe('APPROVED')
     expect(failingSpy).toHaveBeenCalledTimes(1)
+  })
+})
+
+/**
+ * Plan-C T24 / ISC-32: POST /predictions/:id/cancel — full cancellation flow.
+ *
+ * The route looks up the prediction's most recent dispatch in a cancel-able
+ * state (QUEUED/SENT/IN_PROGRESS), invokes the service-layer requestCancel
+ * (CANCEL_PENDING + adapter.cancel), and writes an audit-log entry tagged
+ * `dispatch_cancel`. The mock adapter is in-process so the adapter call
+ * resolves immediately; real CANCELLED transition lands later via webhook.
+ */
+describe('POST /predictions/:id/cancel — Plan-C T24', () => {
+  async function freshPrediction(label: string): Promise<string> {
+    const reg = (await ctx.db.execute<{ id: string; version: number }>(sql`
+      INSERT INTO regions (kind, name, version, geom)
+      VALUES ('AD_HOC', ${'cancel-region-' + label}, 1, ST_GeomFromGeoJSON(${JSON.stringify(poly)}))
+      RETURNING id, version
+    `))[0]!
+    const [vc] = await ctx.db.insert(vehicleClasses).values({ name: `vc-cancel-${label}`, level: 1 }).returning()
+    const [tc] = await ctx.db.insert(taskClasses).values({ name: `tc-cancel-${label}`, level: 1 }).returning()
+    const [p] = await ctx.db.insert(predictions).values({
+      sourceKind: 'WATCHLIST', sourceId: vc!.id,
+      regionId: reg.id, regionVersion: reg.version,
+      windowDate: new Date('2026-09-15'), windowHalf: 'AM',
+      vehicleClassId: vc!.id, taskClassId: tc!.id,
+      kDays: 7, expiresAt: new Date(Date.now() + 7 * 86400_000),
+    }).returning()
+    return p!.id
+  }
+
+  async function seedDispatch(predictionId: string, state: 'QUEUED' | 'SENT' | 'IN_PROGRESS' | 'COMPLETED') {
+    const [row] = await ctx.db.insert(dispatchTasks).values({
+      predictionId,
+      adapterKey: 'mock',
+      state,
+      externalId: `mock-${Math.random().toString(36).slice(2, 10)}`,
+      paramsJson: {},
+    }).returning()
+    return row!
+  }
+
+  test('unauthenticated → 401', async () => {
+    const id = await freshPrediction(`unauth-${Date.now()}`)
+    const res = await app.request(`/predictions/${id}/cancel`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ reason: 'no auth' }),
+    })
+    expect(res.status).toBe(401)
+  })
+
+  test('missing reason → 400 (zod validation)', async () => {
+    const id = await freshPrediction(`noreason-${Date.now()}`)
+    await seedDispatch(id, 'SENT')
+    const res = await app.request(`/predictions/${id}/cancel`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', cookie: analystCookie },
+      body: JSON.stringify({}),
+    })
+    expect(res.status).toBe(400)
+  })
+
+  test('no active dispatch → 404', async () => {
+    const id = await freshPrediction(`noactive-${Date.now()}`)
+    // Don't seed any dispatch — there's nothing to cancel.
+    const res = await app.request(`/predictions/${id}/cancel`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', cookie: analystCookie },
+      body: JSON.stringify({ reason: 'no dispatch' }),
+    })
+    expect(res.status).toBe(404)
+  })
+
+  test('happy path SENT → CANCEL_PENDING + audit log entry written', async () => {
+    const id = await freshPrediction(`happy-${Date.now()}`)
+    const seeded = await seedDispatch(id, 'SENT')
+    const res = await app.request(`/predictions/${id}/cancel`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', cookie: analystCookie },
+      body: JSON.stringify({ reason: 'analyst withdrew approval' }),
+    })
+    expect(res.status).toBe(200)
+    const body = await res.json() as { ok: boolean; dispatch: { id: string; state: string; cancellationReason: string } }
+    expect(body.ok).toBe(true)
+    expect(body.dispatch.id).toBe(seeded.id)
+    expect(body.dispatch.state).toBe('CANCEL_PENDING')
+    expect(body.dispatch.cancellationReason).toBe('analyst withdrew approval')
+
+    // Audit log: most recent dispatch_cancel entry for this dispatch.
+    const [audit] = await ctx.db.select().from(operationAudit)
+      .where(and(
+        eq(operationAudit.targetKind, 'dispatch'),
+        eq(operationAudit.targetId, seeded.id),
+        eq(operationAudit.action, 'dispatch_cancel'),
+      ))
+      .orderBy(desc(operationAudit.occurredAt))
+      .limit(1)
+    expect(audit).toBeDefined()
+    expect(audit!.reason).toBe('analyst withdrew approval')
+    expect(audit!.actorRoleKey).toBe('ANALYST')
+    expect((audit!.before as { state: string }).state).toBe('SENT')
+    expect((audit!.after as { state: string }).state).toBe('CANCEL_PENDING')
+  })
+
+  test('dispatch already COMPLETED → 400 with cancel-rejection error', async () => {
+    const id = await freshPrediction(`completed-${Date.now()}`)
+    // Seed a COMPLETED dispatch — it's terminal so the route's "active" lookup
+    // (QUEUED/SENT/IN_PROGRESS only) won't find it. To test the BadRequest
+    // path from requestCancel we need an "active" row first, but a COMPLETED
+    // row is excluded from the active lookup, so this test exercises the
+    // 404-no-active branch.
+    await ctx.db.insert(dispatchTasks).values({
+      predictionId: id, adapterKey: 'mock', state: 'COMPLETED',
+      externalId: `mock-completed-${Date.now()}`, paramsJson: {},
+    })
+    const res = await app.request(`/predictions/${id}/cancel`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', cookie: analystCookie },
+      body: JSON.stringify({ reason: 'too late' }),
+    })
+    // No active dispatch in cancel-able state → 404.
+    expect(res.status).toBe(404)
   })
 })

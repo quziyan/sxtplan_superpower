@@ -54,20 +54,23 @@ describe('enqueueDispatch + requestCancel (mock adapter)', () => {
     expect(task.paramsJson).toEqual({ camera_ids: ['CAM-001', 'CAM-002'] })
   })
 
-  test('requestCancel transitions to CANCELLED with reason', async () => {
+  test('requestCancel transitions to CANCEL_PENDING with reason (Plan-C T24)', async () => {
     const { db } = ctx
     const p = await setup(db, `disp-cancel-${Date.now()}`)
     const sent = await enqueueDispatch(db, { predictionId: p.id })
     const cancelled = await requestCancel(db, sent.id, 'analyst withdrew approval')
-    expect(cancelled.state).toBe('CANCELLED')
+    // Plan-C T24: requestCancel persists CANCEL_PENDING; the actual CANCELLED
+    // transition arrives later via webhook → advanceFromWebhook. completedAt
+    // is set on terminal states only, so it stays null here.
+    expect(cancelled.state).toBe('CANCEL_PENDING')
     expect(cancelled.cancellationReason).toBe('analyst withdrew approval')
-    expect(cancelled.completedAt).not.toBeNull()
+    expect(cancelled.completedAt).toBeNull()
   })
 
-  test('requestCancel on missing dispatch throws', async () => {
+  test('requestCancel on missing dispatch throws unknown dispatch', async () => {
     const { db } = ctx
     await expect(requestCancel(db, '00000000-0000-0000-0000-000000000000', 'x'))
-      .rejects.toThrow(/not found/)
+      .rejects.toThrow(/unknown dispatch/)
   })
 
   test('unknown adapter key throws on enqueue', async () => {

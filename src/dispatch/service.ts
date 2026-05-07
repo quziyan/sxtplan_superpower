@@ -45,30 +45,81 @@ export async function enqueueDispatch(db: Db, input: EnqueueDispatchInput): Prom
   return sent!
 }
 
-/** Cancel — m2 placeholder; real cancellation flow is m3 */
+/**
+ * Plan-C T24: full cancellation flow — request side.
+ *
+ * 1. Validate state via the state machine (canTransition → CANCEL_PENDING).
+ * 2. Atomically transition to CANCEL_PENDING with cancellationReason set, gated
+ *    on the pre-read state (optimistic lock — concurrent cancel/webhook losers
+ *    throw rather than clobber).
+ * 3. Best-effort call to `adapter.cancel(externalId, "cancel-${dispatchId}")`.
+ *    Idempotency key is deterministic so retries don't double-fire on the
+ *    backend side.
+ *
+ * The dispatch does NOT transition to CANCELLED here — that happens later via
+ * `advanceFromWebhook` when the backend posts the CANCELLED webhook (T18 path).
+ *
+ * Adapter errors are caught and logged but NOT rolled back: the row is already
+ * CANCEL_PENDING in the DB, and the adapter retry / reconcile loop is m4
+ * territory (out of scope for Plan-C). We still return the updated row so the
+ * caller can audit-log the user-visible state change.
+ */
 export async function requestCancel(db: Db, dispatchId: string, reason: string): Promise<DispatchTask> {
+  // Step 1: load the task and validate the transition. The select is outside
+  // the transaction because we want a clean error message if the dispatch
+  // doesn't exist or is in a non-cancellable state — the tx below only handles
+  // the actual write + concurrency check.
   const [task] = await db.select().from(dispatchTasks).where(eq(dispatchTasks.id, dispatchId))
-  if (!task) throw new Error(`dispatch ${dispatchId} not found`)
-  if (!task.externalId) throw new Error(`dispatch ${dispatchId} has no externalId yet`)
+  if (!task) throw new Error(`unknown dispatch ${dispatchId}`)
+  const currentState = task.state as DispatchState
+  if (!canTransition(currentState, 'CANCEL_PENDING')) {
+    throw new Error(`cannot cancel: state is ${currentState}`)
+  }
 
-  // Transition to CANCEL_PENDING
-  await db.update(dispatchTasks).set({
-    state: 'CANCEL_PENDING',
-    cancellationReason: reason,
-    updatedAt: new Date(),
-  }).where(eq(dispatchTasks.id, dispatchId))
+  // Step 2: transactional write with optimistic lock. If a parallel cancel /
+  // webhook moved the row first, the predicate misses and we throw.
+  const updated = await db.transaction(async (tx) => {
+    const [row] = await tx
+      .update(dispatchTasks)
+      .set({
+        state: 'CANCEL_PENDING',
+        cancellationReason: reason,
+        updatedAt: new Date(),
+      })
+      .where(
+        and(
+          eq(dispatchTasks.id, dispatchId),
+          eq(dispatchTasks.state, currentState),
+        ),
+      )
+      .returning()
+    if (!row) {
+      throw new Error(
+        `state changed concurrently for dispatch ${dispatchId}; expected ${currentState}, retry needed`,
+      )
+    }
+    return row
+  })
 
-  // Call adapter.cancel
-  const adapter = getAdapter(task.adapterKey)
-  await adapter.cancel(task.externalId, `cancel-${dispatchId}`)
+  // Step 3: best-effort adapter.cancel. The DB state is already CANCEL_PENDING;
+  // an adapter failure here is logged but does NOT roll back. The reconcile /
+  // retry path is m4 territory.
+  try {
+    const adapter = getAdapter(task.adapterKey)
+    // externalId may be null for tasks cancelled before SENT (QUEUED → CANCEL_PENDING).
+    // In that case there's nothing for the adapter to cancel — it never accepted
+    // the dispatch — so we skip the adapter call entirely.
+    if (task.externalId) {
+      await adapter.cancel(task.externalId, `cancel-${dispatchId}`)
+    }
+  } catch (err) {
+    console.error(
+      `[dispatch] adapter.cancel failed for dispatch ${dispatchId} (${task.adapterKey}/${task.externalId}):`,
+      err instanceof Error ? err.message : err,
+    )
+  }
 
-  // Transition to CANCELLED
-  const [cancelled] = await db.update(dispatchTasks).set({
-    state: 'CANCELLED',
-    completedAt: new Date(),
-    updatedAt: new Date(),
-  }).where(eq(dispatchTasks.id, dispatchId)).returning()
-  return cancelled!
+  return updated
 }
 
 export type AdvanceFromWebhookInput = {

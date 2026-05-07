@@ -1,11 +1,14 @@
 import { Hono } from 'hono'
 import { zValidator } from '@hono/zod-validator'
 import { z } from 'zod'
+import { and, desc, eq, inArray } from 'drizzle-orm'
 import type { Db } from '@/db/client'
 import { authRequired, roleRequired, type AuthContext } from '@/auth/middleware'
 import { logAudit } from '@/audit/log'
 import { BadRequest, NotFound } from '@/lib/errors'
 import { triggerDispatchAfterApproval } from '@/scheduler/triggers/post-approval'
+import { dispatchTasks } from '@/db/schema/dispatch'
+import { requestCancel } from '@/dispatch/service'
 import { writeConfidenceSnapshot } from './confidence'
 import { getPrediction, getSnapshots, listPredictions, transitionStatus } from './service'
 
@@ -118,6 +121,61 @@ export function predictionRoutes(db: Db, deps: PredictionRouteDeps = {}) {
     await logAudit(db, manualEntry)
     return c.json({ ok: true, snapshot: snap })
   })
+
+  // Plan-C T24 / ISC-32: full cancellation flow.
+  //
+  // Lookup the most recent active dispatch (state in QUEUED/SENT/IN_PROGRESS)
+  // for the prediction, then call requestCancel — which persists CANCEL_PENDING
+  // + asks the adapter to cancel. The actual CANCELLED transition lands when
+  // the backend posts the cancellation webhook (T18 path).
+  //
+  // Auth: ANALYST or DECIDER may trigger a cancel. The audit log captures the
+  // actor + role + reason atomically with the route response.
+  app.post(
+    '/:id/cancel',
+    authRequired(db),
+    roleRequired('ANALYST', 'DECIDER'),
+    zValidator('json', z.object({ reason: z.string().min(1) })),
+    async (c) => {
+      const auth = c.get('auth')
+      const predictionId = c.req.param('id')
+      const { reason } = c.req.valid('json')
+      // Most recent dispatch in a cancellable state; deterministic ordering by
+      // createdAt DESC so a re-dispatched task (m4 territory) is preferred.
+      const [active] = await db
+        .select()
+        .from(dispatchTasks)
+        .where(
+          and(
+            eq(dispatchTasks.predictionId, predictionId),
+            inArray(dispatchTasks.state, ['QUEUED', 'SENT', 'IN_PROGRESS']),
+          ),
+        )
+        .orderBy(desc(dispatchTasks.createdAt))
+        .limit(1)
+      if (!active) throw NotFound(`no active dispatch to cancel for prediction ${predictionId}`)
+      try {
+        const updated = await requestCancel(db, active.id, reason)
+        const cancelEntry: import('@/audit/log').AuditEntry = {
+          actorUserId: auth.user.id,
+          targetKind: 'dispatch',
+          targetId: active.id,
+          action: 'dispatch_cancel',
+          before: { state: active.state },
+          after: { state: updated.state },
+          reason,
+        }
+        if (auth.activeRoleKey !== null) cancelEntry.actorRoleKey = auth.activeRoleKey
+        await logAudit(db, cancelEntry)
+        return c.json({ ok: true, dispatch: updated })
+      } catch (e) {
+        // Surface state-machine + concurrency errors as 400 — the dispatch is
+        // in a state where cancel can't proceed. Adapter errors are swallowed
+        // inside requestCancel and never reach here.
+        throw BadRequest((e as Error).message)
+      }
+    },
+  )
 
   // recompute-now — m2: enqueue full-recalc job (queue is stub) + audit log
   app.post('/:id/recompute-now', authRequired(db), roleRequired('ANALYST'), async (c) => {
