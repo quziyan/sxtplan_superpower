@@ -28,6 +28,13 @@ export const predictions = pgTable(
     lastFullAt: timestamp('last_full_at', { withTimezone: true }),
     lastIncrAt: timestamp('last_incr_at', { withTimezone: true }),
     expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+    // Plan-D B1 — auto-cancel control surface.
+    // `autoCancelDisabled` is the operator escape hatch (off by default).
+    // `autoCancelBelowSince` records the first instant confidence dipped under
+    // the configured threshold; the auto-cancel tick uses (NOW() - this) > lag
+    // to avoid cancelling on a single noisy snapshot.
+    autoCancelDisabled: boolean('auto_cancel_disabled').notNull().default(false),
+    autoCancelBelowSince: timestamp('auto_cancel_below_since', { withTimezone: true }),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },

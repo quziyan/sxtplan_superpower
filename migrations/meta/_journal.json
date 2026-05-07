@@ -64,6 +64,13 @@
       "when": 1778124171955,
       "tag": "0008_silent_risque",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1778182332555,
+      "tag": "0009_cuddly_talisman",
+      "breakpoints": true
     }
   ]
 }

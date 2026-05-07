@@ -1,0 +1,2 @@
+ALTER TABLE "predictions" ADD COLUMN "auto_cancel_disabled" boolean DEFAULT false NOT NULL;--> statement-breakpoint
+ALTER TABLE "predictions" ADD COLUMN "auto_cancel_below_since" timestamp with time zone;
