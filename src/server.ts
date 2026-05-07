@@ -7,6 +7,7 @@ import { taxonomyRoutes } from '@/modules/taxonomy/routes'
 import { watchlistRoutes } from '@/modules/watchlist/routes'
 import { taskcardRoutes } from '@/modules/taskcard/routes'
 import { predictionRoutes } from '@/modules/prediction/routes'
+import { webhookRoutes } from '@/webhook/routes'
 import { createDb } from '@/db/client'
 import { loadEnv } from '@/env'
 import { AppError } from '@/lib/errors'
@@ -44,6 +45,7 @@ app.route('/taxonomy', taxonomyRoutes(db))
 app.route('/watchlists', watchlistRoutes(db))
 app.route('/taskcards', taskcardRoutes(db))
 app.route('/predictions', predictionRoutes(db))
+app.route('/webhook', webhookRoutes(db))
 
 logger.info('server starting', { port: env.PORT })
 

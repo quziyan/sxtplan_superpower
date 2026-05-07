@@ -26,6 +26,9 @@ const EnvSchema = z.object({
 
   // --- 高德地理编码 ---
   AMAP_GEOCODE_KEY: z.string().default(''),
+
+  // --- Webhook ingest ---
+  WEBHOOK_HMAC_SECRET: z.string().min(16).default('dev-secret-32-chars-replace-prod'),
 })
 
 export type Env = z.infer<typeof EnvSchema>
