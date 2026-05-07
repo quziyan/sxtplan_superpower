@@ -23,6 +23,7 @@ const EnvSchema = z.object({
   SEARCH_API_KIND: z.enum(['mock', 'bing-news', 'rss', 'ddg', 'aggregator']).default('mock'),
   SEARCH_API_KEY: z.string().default(''),
   SEARCH_API_BASE_URL: z.string().url().default('https://api.bing.microsoft.com/v7.0/news/search'),
+  BING_NEWS_API_KEY: z.string().default(''),  // empty = degraded fallback (Plan-D Task 7)
 
   // --- 高德地理编码 ---
   AMAP_GEOCODE_KEY: z.string().default(''),

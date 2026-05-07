@@ -17,32 +17,83 @@ class MockSearchAdapter implements SearchAdapter {
   }
 }
 
+/**
+ * BingNewsSearchAdapter — real Bing News Search v7 API client (Plan-D Task 7, A2-α).
+ *
+ * Replaces the m2 stub. Behavior:
+ *   - No API key  → log warn + return [] (degraded fallback, never throws).
+ *   - Cache hit   → return cached hits (24h TTL, keyed on {q, freshness}).
+ *   - Rate limit  → ≤3 calls per 1s fixed window, per-instance; 4th call in window
+ *                   returns [] (degraded).
+ *   - HTTP !ok    → log warn + return [] (degraded).
+ *   - fetch throw → log error + return [] (degraded).
+ *   - Real success → map Bing JSON shape → SearchHit[], cache result.
+ */
 class BingNewsSearchAdapter implements SearchAdapter {
   readonly kind = 'bing-news' as const
   readonly key = 'bing-news'
+
+  private cache = new Map<string, { hits: SearchHit[]; expiresAt: number }>()
+  private callsInWindow = 0
+  private windowStart = Date.now()
+
   async query(keywords: string[], opts: SearchOpts = {}): Promise<SearchHit[]> {
     const env = loadEnv()
-    if (!env.SEARCH_API_KEY) throw new Error('SEARCH_API_KEY not set for bing-news')
-    const params = new URLSearchParams({
-      q: keywords.join(' '),
-      count: String(opts.count ?? 20),
-      freshness: opts.freshness ?? 'Week',
-      mkt: 'zh-CN',
-    })
-    const res = await fetch(`${env.SEARCH_API_BASE_URL}?${params}`, {
-      headers: { 'Ocp-Apim-Subscription-Key': env.SEARCH_API_KEY },
-    })
-    if (!res.ok) throw new Error(`bing-news ${res.status}`)
-    const data = await res.json() as {
-      value: Array<{
-        url: string; name: string; description: string; datePublished: string;
-        provider?: Array<{ name: string }>;
-      }>
+    const apiKey = env.BING_NEWS_API_KEY
+
+    if (!apiKey) {
+      console.warn('[bing-news] no API key, returning empty hits (degraded)')
+      return []
     }
-    return data.value.map((v): SearchHit => ({
-      url: v.url, title: v.name, snippet: v.description, publishedAt: v.datePublished,
-      source: { name: v.provider?.[0]?.name ?? 'Unknown', kind: 'mainstream' },
-    }))
+
+    const q = keywords.join(' ')
+    const cacheKey = JSON.stringify({ q, freshness: opts.freshness })
+    const cached = this.cache.get(cacheKey)
+    if (cached && cached.expiresAt > Date.now()) return cached.hits
+
+    // Fixed-window rate limit: ≤3 calls per 1000ms wall clock.
+    const now = Date.now()
+    if (now - this.windowStart >= 1000) {
+      this.windowStart = now
+      this.callsInWindow = 0
+    }
+    if (this.callsInWindow >= 3) {
+      console.warn('[bing-news] rate-limited, returning empty hits (degraded)')
+      return []
+    }
+    this.callsInWindow++
+
+    try {
+      const url = new URL(env.SEARCH_API_BASE_URL)
+      url.searchParams.set('q', q)
+      url.searchParams.set('count', String(opts.count ?? 20))
+      if (opts.freshness) url.searchParams.set('freshness', opts.freshness)
+      const res = await fetch(url, {
+        headers: { 'Ocp-Apim-Subscription-Key': apiKey },
+      })
+      if (!res.ok) {
+        console.warn(`[bing-news] HTTP ${res.status}, returning empty hits (degraded)`)
+        return []
+      }
+      const json = await res.json() as {
+        value?: Array<{
+          url: string; name: string; description: string; datePublished: string;
+          provider?: Array<{ name: string }>;
+        }>
+      }
+      const hits: SearchHit[] = (json.value ?? []).map((item): SearchHit => ({
+        url: item.url,
+        title: item.name,
+        snippet: item.description,
+        publishedAt: item.datePublished,
+        source: { name: item.provider?.[0]?.name ?? 'Bing', kind: 'mainstream' },
+      }))
+      this.cache.set(cacheKey, { hits, expiresAt: Date.now() + 24 * 3600_000 })
+      return hits
+    } catch (e) {
+      console.error(`[bing-news] fetch error: ${(e as Error).message}, returning empty (degraded)`)
+      return []
+    }
   }
 }
 
