@@ -24,4 +24,12 @@ export class MockCameraAdapter implements CameraAdapter {
     // Mock always reports IN_PROGRESS — m3 will replace with real state machine
     return { externalId, state: 'IN_PROGRESS' }
   }
+
+  /**
+   * Stub for simulated outgoing webhook signing — m3 real backends will sign
+   * with their own secret. Mock returns empty string; tests don't verify it.
+   */
+  signOutgoing(_rawBody: string): string {
+    return ''
+  }
 }

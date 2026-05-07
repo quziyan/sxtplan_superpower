@@ -26,4 +26,11 @@ describe('MockCameraAdapter', () => {
   test('getAdapter unknown key throws', () => {
     expect(() => getAdapter('nonexistent')).toThrow(/not registered/)
   })
+
+  test('signOutgoing is defined and returns a string', () => {
+    const a = getAdapter('mock')
+    expect(typeof a.signOutgoing).toBe('function')
+    const sig = a.signOutgoing?.('{"any":"payload"}')
+    expect(typeof sig).toBe('string')
+  })
 })

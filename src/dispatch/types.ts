@@ -23,4 +23,6 @@ export interface CameraAdapter {
   dispatch(req: DispatchRequest): Promise<DispatchAck>
   cancel(externalId: string, idempotencyKey: string): Promise<CancelAck>
   pollStatus(externalId: string): Promise<DispatchStatus>
+  /** 模拟 / 测试用：adapter 内部当作 backend 反向签 webhook payload */
+  signOutgoing?(rawBody: string): string
 }
