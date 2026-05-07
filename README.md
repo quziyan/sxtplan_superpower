@@ -1,8 +1,10 @@
 # 摄像头新闻预测 / 监控调度 / 复盘系统(camera-news-prediction)
 
-> 当前阶段:**m1 Foundation**(应用壳 + 数据库 schema + Auth + 前端骨架)
+> 当前阶段:**m3 Real End-to-End**(完整闭环已落地;Slice 0 可演示)
 > 设计稿:`docs/superpowers/specs/2026-05-05-camera-news-prediction-design.md`
 > Plan-A:`docs/superpowers/plans/2026-05-05-m1-foundation.md`(主)+ `2026-05-06-m1-foundation-frontend-addendum.md`(前端覆写)
+> Plan-B:`docs/superpowers/plans/2026-05-06-m2-prediction-core.md`(m2)
+> Plan-C:`docs/superpowers/plans/2026-05-07-m3-real-end-to-end.md`(m3,本期)
 
 ## 快速启动
 
@@ -80,8 +82,9 @@ cd frontend && bun install && bun run dev   # http://localhost:5173 (代理 /api
 
 ## 后续里程碑
 
-- **m2(Plan-B,待写)**:WatchList + PredictionAgent + 1 信源 + 1 摄像头 adapter + 批准流
-- **m3(Plan-C,待写)**:WebhookIngest + MediaFetcher + 复盘 Agent + 二轴 outcome + Slice 0 验收
+- **m2(Plan-B,已完成)**:WatchList + PredictionAgent + 多信源 + mock 摄像头 adapter + 批准流(详见下方 m2 Prediction Core 段)
+- **m3(Plan-C,本期完成)**:WebhookIngest + SimulatedGuangzhouPoliceCamAdapter + MediaFetcher + 真挂 BullMQ workers + 复盘 Agent + 二轴 outcome + Slice 0 验收(详见下方 m3 — Real End-to-End 段)
+- **m4+**:真实甲方 backend 接入 + RSS/政务/社交/外文多通道 + AD_HOC→ADMIN_NAMED 晋升
 
 ## 端口约定
 
@@ -158,3 +161,104 @@ bun test tests/inference/client.test.ts
 - **EX-3** 信源选定 — 用户已确认多通道(mock/rss/bing/ddg/aggregator)
 - **EX-4** 阿里云 dashscope key — `prds/LLMConfig.md` 已有,move 到 `.env`(用户明确允许明文)
 - **EX-5** 高德 Geocode key — 客户决定;可空,fallback 已就位
+
+---
+
+## m3 — Real End-to-End
+
+> 当前阶段:**m3 Real End-to-End**(把 m2 的 stub / mock 全部换成真实闭环)
+> 详细计划:`docs/superpowers/plans/2026-05-07-m3-real-end-to-end.md`(37 任务)
+> 范围:WebhookIngest + SimulatedGuangzhouPoliceCamAdapter + MediaFetcher (OSS) + 真挂 BullMQ workers + RetrospectiveAgent + 二轴 outcome + 案例库 + D 角色 ReviewerView
+
+### 新增 env 变量(以 `.env.example` 为准)
+
+```
+# Webhook ingest(HMAC 共享密钥,>=16 chars)
+WEBHOOK_HMAC_SECRET=dev-secret-32-chars-replace-prod
+
+# Simulated 广州警务摄像头适配器(默认关闭;开启后启用模拟下发 + webhook 回调)
+SIMULATED_GZP_ENABLED=false
+SIMULATED_GZP_API_KEY=test-key                        # EX-8:任填一个 32 位 hex 即可
+SIMULATED_GZP_WEBHOOK_URL=http://localhost:3000/webhook/simulated-gzp
+SIMULATED_GZP_FAKE_MEDIA_BASE=http://localhost:3000/static/sim-media/
+
+# 阿里云 OSS(EX-6;MediaFetcher 写入,空 AK 时 client 抛错)
+OSS_ENDPOINT=https://oss-cn-shenzhen.aliyuncs.com
+OSS_ACCESS_KEY_ID=
+OSS_ACCESS_KEY_SECRET=
+OSS_BUCKET=cnp-media-dev
+```
+
+### Worker 启动方式
+
+```bash
+# 单进程启动全部 worker(refresh / cadence tick / full-recalc / dispatch / media-fetch / retrospective + retro tick)
+bun src/scheduler/workers.ts
+```
+
+- 依赖 Redis 在 `localhost:6379`(或由 `REDIS_URL` 指定)
+- `SIGTERM` / `SIGINT` 触发 `stopWorkers()` 清队列 + `closeAllQueues()` 后再 `exit(0)`,可安全 ctrl-C / docker stop
+- 队列定义:refresh / full-recalc / news-ingest / dispatch / media-fetch / retrospective(共 6 个 BullMQ queue)
+
+### m3 关键流程概览
+
+```
+监视清单 → PredictionAgent(P1-P5 触发 + cadence) → confidence_snapshot
+   ↓ (A 批准)
+dispatch_task QUEUED → SimulatedGuangzhouPoliceCamAdapter 模拟下发
+   ↓ (异步 webhook 回调)
+WebhookIngest(HMAC 验签) → 状态机 IN_PROGRESS / COMPLETED → media-fetch worker
+   ↓
+MediaFetcher 拉取 → 阿里云 OSS(media_assets 落库)
+   ↓ (T+K+M 后,retrospective tick 扫描)
+RetrospectiveAgent → retrospectives + case_library
+   ↓
+D 角色 ReviewerView 看到二轴矩阵 + 漂移 → 反馈到 PredictionAgent 的 D 通道
+```
+
+### 外部依赖状态(EX-1..EX-8)
+
+| 依赖 | 状态 | 备注 |
+|---|---|---|
+| **EX-1** 警务车辆 V/T 分类(C-1..C-5) | ✅ 已就绪 | `bun run seed:taxonomy:police` 一次性写入 |
+| **EX-2** 真实甲方 backend | ⚠️ 待客户对接 | 当前用 `SimulatedGuangzhouPoliceCamAdapter` 顶替;契约文档到位即换 adapter |
+| **EX-3** news adapter 多通道 | ⚠️ 部分就绪 | mock 为默认;bing-news / rss / ddg / aggregator 已有 adapter 骨架,真实信源种子留 m4 |
+| **EX-4** Aliyun dashscope LLM | ✅ 已配置 | `LLM_API_KEY` / `LLM_BASE_URL` / `LLM_MODEL`,key 在 `prds/LLMConfig.md` |
+| **EX-5** 高德 Geocode key | ⚠️ 待申请 | 无 key 时 fallback 走规则匹配;广州市级地理化建议本期申请 |
+| **EX-6** 阿里云 OSS bucket + AccessKey | ⚠️ 待申请 | MediaFetcher 必需;**Slice 0 acceptance 阶段必须有真 bucket** |
+| **EX-7** 公网 webhook 域名 | ⚠️ 待准备 | 开发期 ngrok / cpolar 反向代理即可;正式部署前换签发证书的域名 |
+| **EX-8** Simulated 测试 API key | ⚠️ 任填即可 | `SIMULATED_GZP_API_KEY` 任填一个 32 位 hex,与 adapter 内部对账 |
+
+### Demo 启动脚本(简略;详细 runbook 见 Plan-C Task 37 / Slice 0 段)
+
+```bash
+# 1. 起 docker postgres + redis
+docker compose up -d
+docker compose ps   # 等到 cnp-postgres / cnp-redis 都 (healthy)
+
+# 2. 跑 migration + seed
+bun install
+bun run db:migrate
+bun run seed:bootstrap          # 3 个 role + admin@cnp.local / admin1234
+bun run seed:taxonomy:police    # V/T 分类(C-1..C-5)
+
+# 3. 起 backend + workers(各开一个 terminal,或 nohup 后台)
+bun run dev &                   # backend on :3000
+bun src/scheduler/workers.ts &  # 6 worker + 2 tick
+
+# 4. 起 frontend dev server
+cd frontend && bun install && bun run dev   # http://localhost:5173
+
+# 5. 浏览器访问 http://localhost:5173,登录 admin@cnp.local / admin1234
+#    打开监视清单 → 等 PredictionAgent 触发 → 批准 → 看 dispatch + webhook + media + 复盘
+```
+
+> 真实演示需要先把 `SIMULATED_GZP_ENABLED=true` 打开,否则 dispatch 走 mock-camera 默认 adapter,不会回调 webhook。
+
+### m3 已知重构债务清单(留 m4 / 后续技术债)
+
+- `logAudit` helper 应支持 `Db | PgTransaction` 联合类型(T23 期间累积,目前传 `Db` 工作但事务内调用绕过隔离)
+- 测试 DB 事务级隔离(`BEGIN` / `ROLLBACK` 包测试)— T14 + T22 累积污染,目前靠手动 cleanup
+- `createBullMQWorker(name, handler)` helper(6 worker 复制 connection / concurrency / 监听样板)
+- `DEFAULT_ADAPTER_KEY` 共享常量(避免 `simulated-gzp` 与 `mock` 默认值在不同入口不一致)
+- `GET /retrospectives/aggregate` 端点(T30 客户端用 `?limit=500` 暴露 N+1,服务端聚合更合适)
