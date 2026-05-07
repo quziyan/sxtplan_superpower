@@ -239,4 +239,140 @@ describe('advanceFromWebhook (integration)', () => {
       .where(eq(dispatchResults.dispatchId, task.id))
     expect(results.length).toBe(0)
   })
+
+  test('concurrent webhooks: optimistic lock — exactly one wins per race', async () => {
+    // T08's SimulatedGuangzhouPoliceCamAdapter schedules IN_PROGRESS and
+    // COMPLETED via setTimeout and POSTs them in parallel through the
+    // webhook. Without the optimistic-lock predicate, both calls read the
+    // same QUEUED pre-image, both pass canTransition, and both UPDATE —
+    // the later write clobbering the earlier and possibly producing an
+    // orphan dispatch_results row. With the fix, exactly ONE call wins per
+    // race; the loser hits one of two paths:
+    //   (a) Truly-concurrent SELECT: both read QUEUED, only one gated
+    //       UPDATE matches, the other returns zero rows → throws
+    //       `state changed concurrently`.
+    //   (b) Sequential SELECT: loser's SELECT lands after winner commits,
+    //       reads the new state, and `canTransition` rejects it →
+    //       throws `invalid transition`.
+    // Both outcomes preserve the safety invariant. We stress 8 iterations
+    // to ensure path (a) — the optimistic lock specifically — fires at
+    // least once, proving the predicate is wired and effective. The first
+    // iteration is excluded from the path-(a) counter because cold
+    // connection setup tends to serialize.
+    const { db } = ctx
+
+    let lockFiredAtLeastOnce = false
+    const ITERATIONS = 8
+
+    for (let i = 0; i < ITERATIONS; i++) {
+      const p = await setupPrediction(db, `sm-race-${Date.now()}-${i}`)
+      const ext = `ext-race-${Date.now()}-${i}`
+      await insertDispatch(db, p.id, 'QUEUED', ext)
+
+      // Two valid transitions out of QUEUED. We pick SENT and
+      // REJECTED_BY_ADAPTER specifically because neither is reachable
+      // from the other — so if both calls succeed it can ONLY be due to
+      // the bug (clobbered writes), not due to a legitimate sequential
+      // re-read of the post-image.
+      const results = await Promise.allSettled([
+        advanceFromWebhook(db, {
+          externalId: ext,
+          adapterKey: 'simulated-gzp',
+          newState: 'SENT',
+        }),
+        advanceFromWebhook(db, {
+          externalId: ext,
+          adapterKey: 'simulated-gzp',
+          newState: 'REJECTED_BY_ADAPTER',
+        }),
+      ])
+
+      const fulfilled = results.filter((r) => r.status === 'fulfilled')
+      const rejected = results.filter((r) => r.status === 'rejected')
+
+      // Hard invariant: regardless of timing, exactly one of the two
+      // parallel calls succeeds. Both succeeding is the bug; both failing
+      // would be a regression elsewhere.
+      expect(fulfilled.length).toBe(1)
+      expect(rejected.length).toBe(1)
+
+      const loser = rejected[0] as PromiseRejectedResult
+      const loserMsg =
+        loser.reason instanceof Error ? loser.reason.message : String(loser.reason)
+      // Loser must throw one of the two documented safe paths.
+      expect(loserMsg).toMatch(/state changed concurrently|invalid transition/)
+
+      if (/state changed concurrently/.test(loserMsg)) {
+        lockFiredAtLeastOnce = true
+        expect(loserMsg).toContain('expected QUEUED')
+      }
+
+      // Final row reflects the winner's target state — never QUEUED, and
+      // never a half-applied mix.
+      const [row] = await db
+        .select()
+        .from(dispatchTasks)
+        .where(eq(dispatchTasks.externalId, ext))
+      expect(row).toBeDefined()
+      expect(['SENT', 'REJECTED_BY_ADAPTER']).toContain(row!.state)
+    }
+
+    // Across 8 iterations the optimistic-lock path must fire at least
+    // once, proving the predicate is in place and effective. Without the
+    // fix, the bug would manifest as fulfilled.length === 2 and this
+    // test would have already failed above; the lock-firing assertion is
+    // additional rigor that the gated UPDATE specifically did its job.
+    expect(lockFiredAtLeastOnce).toBe(true)
+  })
+
+  test('atomic rollback: dispatchResults insert failure preserves pre-state', async () => {
+    // The transaction must include both the UPDATE and the conditional
+    // dispatch_results INSERT. If the INSERT fails for any reason, the
+    // state UPDATE must roll back — otherwise we'd advance to COMPLETED
+    // without ever recording the payload, silently losing data.
+    //
+    // Trigger the failure by passing a payload containing a BigInt:
+    // Drizzle's jsonb column serializes via JSON.stringify, which throws
+    // `TypeError: Do not know how to serialize a BigInt`. The throw
+    // happens inside the tx callback, so PG rolls back the UPDATE.
+    const { db } = ctx
+    const p = await setupPrediction(db, `sm-rollback-${Date.now()}`)
+    const ext = `ext-rollback-${Date.now()}`
+    const task = await insertDispatch(db, p.id, 'IN_PROGRESS', ext)
+
+    // Sanity: read pre-state.
+    const [pre] = await db
+      .select()
+      .from(dispatchTasks)
+      .where(eq(dispatchTasks.id, task.id))
+    expect(pre!.state).toBe('IN_PROGRESS')
+    expect(pre!.completedAt).toBeNull()
+
+    // BigInt values are not JSON-serializable; the insert blows up inside
+    // the transaction.
+    const poisonPayload: Record<string, unknown> = { count: 1n }
+    await expect(
+      advanceFromWebhook(db, {
+        externalId: ext,
+        adapterKey: 'simulated-gzp',
+        newState: 'COMPLETED',
+        payload: poisonPayload,
+      }),
+    ).rejects.toThrow()
+
+    // Verify rollback: state is still IN_PROGRESS, completedAt still null,
+    // and no orphan dispatch_results row was committed.
+    const [post] = await db
+      .select()
+      .from(dispatchTasks)
+      .where(eq(dispatchTasks.id, task.id))
+    expect(post!.state).toBe('IN_PROGRESS')
+    expect(post!.completedAt).toBeNull()
+
+    const results = await db
+      .select()
+      .from(dispatchResults)
+      .where(eq(dispatchResults.dispatchId, task.id))
+    expect(results.length).toBe(0)
+  })
 })

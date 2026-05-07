@@ -87,55 +87,76 @@ export type AdvanceFromWebhookInput = {
  * webhooks don't carry our internal UUID. Transition is validated against
  * the state machine; illegal transitions throw rather than silently no-op.
  *
+ * Concurrency: the entire body runs inside a single DB transaction, and the
+ * UPDATE is gated on the pre-read `state` (optimistic lock). If two webhooks
+ * for the same dispatch race (e.g. SimulatedGuangzhouPoliceCamAdapter posts
+ * IN_PROGRESS and COMPLETED ms apart), exactly one wins; the loser sees
+ * zero rows updated and throws `state changed concurrently …` so the caller
+ * (T18 webhook ingest) can retry or mark PROCESSING_FAILED — no clobbered
+ * writes, no orphan dispatch_results rows.
+ *
  * Side effects beyond the state column:
  *  - IN_PROGRESS sets `callbackAt` (first time the camera reported back)
  *  - COMPLETED / FAILED set `completedAt`
- *  - COMPLETED with payload also writes a `dispatch_results` row
+ *  - COMPLETED with payload also writes a `dispatch_results` row (same tx)
  */
 export async function advanceFromWebhook(
   db: Db,
   params: AdvanceFromWebhookInput,
 ): Promise<DispatchTask> {
-  const [task] = await db
-    .select()
-    .from(dispatchTasks)
-    .where(
-      and(
-        eq(dispatchTasks.adapterKey, params.adapterKey),
-        eq(dispatchTasks.externalId, params.externalId),
-      ),
-    )
-  if (!task) {
-    throw new Error(`unknown dispatch ${params.adapterKey}/${params.externalId}`)
-  }
-  if (!canTransition(task.state as DispatchState, params.newState)) {
-    throw new Error(`invalid transition ${task.state} → ${params.newState}`)
-  }
+  return db.transaction(async (tx) => {
+    const [task] = await tx
+      .select()
+      .from(dispatchTasks)
+      .where(
+        and(
+          eq(dispatchTasks.adapterKey, params.adapterKey),
+          eq(dispatchTasks.externalId, params.externalId),
+        ),
+      )
+    if (!task) {
+      throw new Error(`unknown dispatch ${params.adapterKey}/${params.externalId}`)
+    }
+    if (!canTransition(task.state as DispatchState, params.newState)) {
+      throw new Error(`invalid transition ${task.state} → ${params.newState}`)
+    }
 
-  const now = new Date()
-  const updates = {
-    state: params.newState,
-    updatedAt: now,
-    ...(params.newState === 'IN_PROGRESS' ? { callbackAt: now } : {}),
-    ...(params.newState === 'COMPLETED' || params.newState === 'FAILED'
-      ? { completedAt: now }
-      : {}),
-  } satisfies Partial<typeof dispatchTasks.$inferInsert>
+    const now = new Date()
+    const updates = {
+      state: params.newState,
+      updatedAt: now,
+      ...(params.newState === 'IN_PROGRESS' ? { callbackAt: now } : {}),
+      ...(params.newState === 'COMPLETED' || params.newState === 'FAILED'
+        ? { completedAt: now }
+        : {}),
+    } satisfies Partial<typeof dispatchTasks.$inferInsert>
 
-  const [updated] = await db
-    .update(dispatchTasks)
-    .set(updates)
-    .where(eq(dispatchTasks.id, task.id))
-    .returning()
-  if (!updated) throw new Error(`dispatch ${task.id} update returned no row`)
+    // Optimistic-lock predicate: only update if state still matches what we
+    // read. If a parallel webhook moved the row first, this returns zero rows.
+    const [updated] = await tx
+      .update(dispatchTasks)
+      .set(updates)
+      .where(
+        and(
+          eq(dispatchTasks.id, task.id),
+          eq(dispatchTasks.state, task.state),
+        ),
+      )
+      .returning()
+    if (!updated) {
+      throw new Error(
+        `state changed concurrently for ${params.adapterKey}/${params.externalId}; expected ${task.state}, retry needed`,
+      )
+    }
 
-  if (params.newState === 'COMPLETED' && params.payload) {
-    await db.insert(dispatchResults).values({
-      dispatchId: task.id,
-      payloadJson: params.payload,
-      capturedAt: now,
-    })
-  }
+    if (params.newState === 'COMPLETED' && params.payload) {
+      await tx.insert(dispatchResults).values({
+        dispatchId: task.id,
+        payloadJson: params.payload,
+        capturedAt: now,
+      })
+    }
 
-  return updated
+    return updated
+  })
 }
