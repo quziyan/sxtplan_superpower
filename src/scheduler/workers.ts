@@ -4,6 +4,8 @@
 // m3: full-recalc worker wired (Plan-C T15) — P1-P5 evaluator → FULL job.
 // m3: dispatch worker wired (Plan-C T16, ISC-24) — consumes post-approval
 // trigger jobs and delegates to enqueueDispatch.
+// m3: media-fetch worker wired (Plan-C T19, ISC-27 §7) — pulls dispatch
+// result media URLs to OSS and records MediaAsset rows.
 // The queue definitions live in queue.ts.
 
 import type { Worker } from 'bullmq'
@@ -11,6 +13,7 @@ import { closeAllQueues } from './queue'
 import { scheduleCadenceTick } from './workers/cadence'
 import { createDispatchWorker } from './workers/dispatch'
 import { createFullRecalcWorker } from './workers/full-recalc'
+import { createMediaFetchWorker } from './workers/media-fetch'
 import { createRefreshWorker } from './workers/refresh'
 
 const workers: Worker[] = []
@@ -23,9 +26,11 @@ export async function startWorkers(): Promise<void> {
   console.log('[scheduler] full-recalc worker registered')
   workers.push(createDispatchWorker())
   console.log('[scheduler] dispatch worker registered')
+  workers.push(createMediaFetchWorker())
+  console.log('[scheduler] media-fetch worker registered')
   intervals.push(scheduleCadenceTick())
   console.log('[scheduler] cadence tick scheduled (60s)')
-  console.log('[scheduler] queues defined: refresh, full-recalc, news-ingest, dispatch')
+  console.log('[scheduler] queues defined: refresh, full-recalc, news-ingest, dispatch, media-fetch')
 }
 
 export async function stopWorkers(): Promise<void> {
