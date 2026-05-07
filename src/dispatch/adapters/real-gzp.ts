@@ -41,16 +41,17 @@ export class RealGuangzhouPoliceCamAdapter implements CameraAdapter {
       priority: params.priority ?? null,
       metadata: params.metadata ?? null,
     })
-    const signature = computeSignature(body, this.cfg.webhookSecret)
     const idempotencyKey = `dispatch-${req.predictionId}-${randomUUID()}`
 
+    // Outbound headers per customer-camera-api-v0.1.md §3.1:
+    // X-API-Key, X-Idempotency-Key, Content-Type. X-Signature is INBOUND-only
+    // (customer→us webhooks, §3.2) — not part of the outbound contract.
     const res = await fetch(url, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'X-API-Key': this.cfg.apiKey,
         'X-Idempotency-Key': idempotencyKey,
-        'X-Signature': signature,
       },
       body,
       signal: AbortSignal.timeout(this.cfg.requestTimeoutMs),
@@ -66,23 +67,26 @@ export class RealGuangzhouPoliceCamAdapter implements CameraAdapter {
 
   async cancel(externalId: string, idempotencyKey: string): Promise<CancelAck> {
     const url = new URL('/cancel', this.cfg.backendBaseUrl)
+    // TODO m4+: thread reason through CameraAdapter.cancel for customer-side audit
+    //   (customer-camera-api-v0.1.md §3.3 documents `reason?: string`).
     const body = JSON.stringify({ externalId })
-    const signature = computeSignature(body, this.cfg.webhookSecret)
 
+    // Outbound headers per customer-camera-api-v0.1.md §3.3:
+    // X-API-Key, X-Idempotency-Key, Content-Type. X-Signature is INBOUND-only
+    // (customer→us webhooks, §3.2) — not part of the outbound contract.
     const res = await fetch(url, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'X-API-Key': this.cfg.apiKey,
         'X-Idempotency-Key': idempotencyKey,
-        'X-Signature': signature,
       },
       body,
       signal: AbortSignal.timeout(this.cfg.requestTimeoutMs),
     })
 
     if (!res.ok) {
-      throw new Error(`real-gzp cancel failed: HTTP ${res.status}`)
+      throw new Error(`real-gzp cancel failed: HTTP ${res.status} - ${await res.text()}`)
     }
 
     const json = (await res.json()) as { externalId: string; cancelledAt: string }

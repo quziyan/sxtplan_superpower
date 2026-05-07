@@ -40,7 +40,6 @@ describe('RealGuangzhouPoliceCamAdapter', () => {
     const call = calls[0]!
     expect(call.url).toBe('https://camera.example.com.cn/dispatch')
     expect(call.init.headers!['X-API-Key']).toBe('test-api-key')
-    expect(call.init.headers!['X-Signature']).toMatch(/^[0-9a-f]{64}$/)
     expect(call.init.headers!['X-Idempotency-Key']).toMatch(/^dispatch-pred-1-/)
   })
 
@@ -70,6 +69,8 @@ describe('RealGuangzhouPoliceCamAdapter', () => {
     const call = calls[0]!
     expect(call.url).toBe('https://camera.example.com.cn/cancel')
     expect(call.init.headers!['X-Idempotency-Key']).toBe('cancel-test-1')
+    expect(call.init.headers!['X-API-Key']).toBe('test-api-key')
+    expect(call.init.headers!['Content-Type']).toBe('application/json')
   })
 
   test('signOutgoing produces deterministic 64-hex HMAC', () => {
