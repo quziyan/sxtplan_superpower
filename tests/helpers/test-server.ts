@@ -3,6 +3,9 @@ import type { ContentfulStatusCode } from 'hono/utils/http-status'
 import { authRoutes } from '@/auth/routes'
 import { regionRoutes } from '@/modules/region/routes'
 import { taxonomyRoutes } from '@/modules/taxonomy/routes'
+import { watchlistRoutes } from '@/modules/watchlist/routes'
+import { taskcardRoutes } from '@/modules/taskcard/routes'
+import { predictionRoutes } from '@/modules/prediction/routes'
 import { AppError } from '@/lib/errors'
 import type { Db } from '@/db/client'
 
@@ -18,5 +21,8 @@ export function buildTestApp(db: Db) {
   app.route('/auth', authRoutes(db))
   app.route('/regions', regionRoutes(db))
   app.route('/taxonomy', taxonomyRoutes(db))
+  app.route('/watchlists', watchlistRoutes(db))
+  app.route('/taskcards', taskcardRoutes(db))
+  app.route('/predictions', predictionRoutes(db))
   return app
 }
