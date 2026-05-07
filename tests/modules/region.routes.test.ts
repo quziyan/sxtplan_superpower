@@ -60,4 +60,49 @@ describe('region routes', () => {
     })
     expect(res.status).toBe(401)
   })
+
+  test('GET /regions defaults to ADMIN_NAMED current-effective only', async () => {
+    // Seed one of each kind so the filter has something to discriminate on.
+    const stamp = Date.now()
+    const named = await app.request('/regions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', cookie },
+      body: JSON.stringify({ kind: 'ADMIN_NAMED', name: `朝阳区-list-${stamp}`, geom: poly }),
+    })
+    expect(named.status).toBe(201)
+    const adhoc = await app.request('/regions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', cookie },
+      body: JSON.stringify({ kind: 'AD_HOC', geom: poly }),
+    })
+    expect(adhoc.status).toBe(201)
+    const adhocBody = await adhoc.json() as { id: string }
+
+    const res = await app.request('/regions')
+    expect(res.status).toBe(200)
+    const body = await res.json() as Array<{ id: string; kind: string; name: string | null; version: number }>
+    expect(Array.isArray(body)).toBe(true)
+    expect(body.every((r) => r.kind === 'ADMIN_NAMED')).toBe(true)
+    expect(body.some((r) => r.name === `朝阳区-list-${stamp}`)).toBe(true)
+    expect(body.every((r) => r.id !== adhocBody.id)).toBe(true)
+  })
+
+  test('GET /regions?kind=ALL includes AD_HOC', async () => {
+    const stamp = Date.now()
+    const adhoc = await app.request('/regions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', cookie },
+      body: JSON.stringify({ kind: 'AD_HOC', geom: poly }),
+    })
+    expect(adhoc.status).toBe(201)
+    const adhocBody = await adhoc.json() as { id: string }
+
+    const res = await app.request('/regions?kind=ALL')
+    expect(res.status).toBe(200)
+    const body = await res.json() as Array<{ id: string; kind: string; version: number }>
+    expect(body.some((r) => r.id === adhocBody.id && r.kind === 'AD_HOC')).toBe(true)
+    // Every row should still expose a numeric version for downstream picker logic.
+    expect(body.every((r) => typeof r.version === 'number' && r.version >= 1)).toBe(true)
+    void stamp
+  })
 })

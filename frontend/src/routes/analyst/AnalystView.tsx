@@ -2,12 +2,21 @@ import { useEffect, useState } from 'react'
 import { Btn, Icon, KpiRow, PageHeader, PredictionTable } from '@/components'
 import { listPredictions, type Prediction } from '@/lib/prediction-api'
 import { listWatchLists, type WatchList } from '@/lib/watchlist-api'
+import { NewWatchListModal } from './NewWatchListModal'
 
 export function AnalystView({ onOpenPrediction }: { onOpenPrediction?: (id: string) => void }) {
   const [watchlists, setWatchlists] = useState<WatchList[]>([])
   const [predictions, setPredictions] = useState<Prediction[]>([])
   const [loading, setLoading] = useState(true)
   const [activeWatchlist, setActiveWatchlist] = useState<string>('all')
+  const [newModalOpen, setNewModalOpen] = useState(false)
+
+  // Refetch watchlists after a new one is created via the modal. Predictions
+  // don't change when a watchlist is created (no signals attached yet) so we
+  // skip refetching them here.
+  const refreshWatchlists = () => {
+    listWatchLists().then(setWatchlists).catch(console.error)
+  }
 
   useEffect(() => {
     Promise.all([listWatchLists(), listPredictions({ limit: 100 })])
@@ -45,7 +54,12 @@ export function AnalystView({ onOpenPrediction }: { onOpenPrediction?: (id: stri
         <div className="sidebar__group">
           <div className="sidebar__heading">
             <span>监视清单</span>
-            <button title="新建监视清单(m3)" disabled><Icon name="plus" size={12} /></button>
+            <button
+              title="新建监视清单"
+              onClick={() => setNewModalOpen(true)}
+            >
+              <Icon name="plus" size={12} />
+            </button>
           </div>
           <div
             className={`sidebar__item ${activeWatchlist === 'all' ? 'active' : ''}`}
@@ -58,7 +72,7 @@ export function AnalystView({ onOpenPrediction }: { onOpenPrediction?: (id: stri
           </div>
           {watchlists.length === 0 && !loading && (
             <div className="empty" style={{ padding: 'var(--sp-3) 0', fontSize: 11 }}>
-              (无监视清单 — m2 暂无 UI 创建,通过 API 创建)
+              (无监视清单 — 点击 + 新建)
             </div>
           )}
           {watchlists.filter(w => w.isActive).map(w => (
@@ -109,6 +123,12 @@ export function AnalystView({ onOpenPrediction }: { onOpenPrediction?: (id: stri
           )}
         </div>
       </main>
+
+      <NewWatchListModal
+        open={newModalOpen}
+        onClose={() => setNewModalOpen(false)}
+        onCreated={refreshWatchlists}
+      />
     </div>
   )
 }

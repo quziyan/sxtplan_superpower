@@ -3,7 +3,7 @@ import { zValidator } from '@hono/zod-validator'
 import { z } from 'zod'
 import type { Db } from '@/db/client'
 import { authRequired, type AuthContext } from '@/auth/middleware'
-import { createRegion, getRegion, updateAdminRegionGeom } from './service'
+import { createRegion, getRegion, listRegions, updateAdminRegionGeom } from './service'
 
 const polygonSchema = z.object({
   type: z.literal('Polygon'),
@@ -21,6 +21,17 @@ type Vars = { auth: AuthContext }
 
 export function regionRoutes(db: Db) {
   const app = new Hono<{ Variables: Vars }>()
+
+  // List current-effective regions for picker UIs (e.g. NewWatchListModal).
+  // Defaults to ADMIN_NAMED only — pass ?kind=ALL to include AD_HOC. Public
+  // for read so the analyst SPA can populate dropdowns before role selection.
+  app.get('/', async (c) => {
+    const kindParam = c.req.query('kind')
+    const kind = kindParam === 'ADMIN_NAMED' || kindParam === 'AD_HOC' || kindParam === 'ALL'
+      ? kindParam
+      : 'ADMIN_NAMED'
+    return c.json(await listRegions(db, { kind }))
+  })
 
   app.post('/', authRequired(db), zValidator('json', createSchema), async (c) => {
     const auth = c.get('auth')

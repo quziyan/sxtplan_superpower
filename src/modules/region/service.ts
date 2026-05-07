@@ -7,6 +7,32 @@ export type CreateRegionInput =
   | { kind: 'ADMIN_NAMED'; name: string; parentId?: string; geom: GeoJSON.Polygon; createdBy?: string }
   | { kind: 'AD_HOC'; name?: string; geom: GeoJSON.Polygon; createdBy?: string }
 
+// Lightweight summary used by region pickers (e.g. NewWatchListModal).
+// Returns only current effective rows (effective_to IS NULL). By default
+// limits to ADMIN_NAMED — picker UIs almost never want to attach work to an
+// AD_HOC region. Pass kind: 'ALL' to include both.
+export type RegionListItem = {
+  id: string
+  kind: 'ADMIN_NAMED' | 'AD_HOC'
+  name: string | null
+  version: number
+}
+
+export async function listRegions(
+  db: Db,
+  opts: { kind?: 'ADMIN_NAMED' | 'AD_HOC' | 'ALL' } = {},
+): Promise<RegionListItem[]> {
+  const kind = opts.kind ?? 'ADMIN_NAMED'
+  const kindFilter = kind === 'ALL' ? sql`` : sql`AND kind = ${kind}`
+  const result = await db.execute(sql`
+    SELECT id, kind, name, version
+    FROM regions
+    WHERE effective_to IS NULL ${kindFilter}
+    ORDER BY (name IS NULL), name, id
+  `)
+  return result as unknown as RegionListItem[]
+}
+
 function validatePolygon(p: GeoJSON.Polygon) {
   if (p.type !== 'Polygon') throw BadRequest('geom must be Polygon')
   if (!p.coordinates.length) throw BadRequest('Polygon must have at least one ring')
