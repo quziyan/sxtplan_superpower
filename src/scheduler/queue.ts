@@ -25,6 +25,21 @@ export const mediaFetchQueue = new Queue<{
   mediaType: 'image' | 'video' | 'metadata'
 }>('media-fetch', { connection })
 
+/**
+ * Retrospective queue (Plan-C T22, ISC-30). Producer: the periodic
+ * retrospective tick (`tickRetrospective`) which scans for predictions
+ * whose `window_date + M_default days < NOW()` and have no retrospective
+ * row yet. Consumer: T22 worker, which delegates to `runRetrospectiveAgent`
+ * (T21) to produce the 4-piece artifact + case-library entry.
+ *
+ * `reviewerNotes` is optional — the periodic tick never sets it, but the
+ * job shape supports manual on-demand replays that pass operator context.
+ */
+export const retrospectiveQueue = new Queue<{
+  predictionId: string
+  reviewerNotes?: string
+}>('retrospective', { connection })
+
 export async function closeAllQueues() {
   await Promise.allSettled([
     refreshQueue.close(),
@@ -32,5 +47,6 @@ export async function closeAllQueues() {
     newsIngestQueue.close(),
     dispatchQueue.close(),
     mediaFetchQueue.close(),
+    retrospectiveQueue.close(),
   ])
 }

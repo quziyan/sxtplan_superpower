@@ -6,6 +6,9 @@
 // trigger jobs and delegates to enqueueDispatch.
 // m3: media-fetch worker wired (Plan-C T19, ISC-27 §7) — pulls dispatch
 // result media URLs to OSS and records MediaAsset rows.
+// m3: retrospective worker + tick wired (Plan-C T22, ISC-30) — periodic
+// scan for due predictions enqueues retro jobs that delegate to
+// runRetrospectiveAgent (T21).
 // The queue definitions live in queue.ts.
 
 import type { Worker } from 'bullmq'
@@ -15,6 +18,7 @@ import { createDispatchWorker } from './workers/dispatch'
 import { createFullRecalcWorker } from './workers/full-recalc'
 import { createMediaFetchWorker } from './workers/media-fetch'
 import { createRefreshWorker } from './workers/refresh'
+import { createRetrospectiveWorker, scheduleRetrospectiveTick } from './workers/retrospective'
 
 const workers: Worker[] = []
 const intervals: ReturnType<typeof setInterval>[] = []
@@ -28,9 +32,13 @@ export async function startWorkers(): Promise<void> {
   console.log('[scheduler] dispatch worker registered')
   workers.push(createMediaFetchWorker())
   console.log('[scheduler] media-fetch worker registered')
+  workers.push(createRetrospectiveWorker())
+  console.log('[scheduler] retrospective worker registered')
   intervals.push(scheduleCadenceTick())
   console.log('[scheduler] cadence tick scheduled (60s)')
-  console.log('[scheduler] queues defined: refresh, full-recalc, news-ingest, dispatch, media-fetch')
+  intervals.push(scheduleRetrospectiveTick())
+  console.log('[scheduler] retrospective tick scheduled (5m)')
+  console.log('[scheduler] queues defined: refresh, full-recalc, news-ingest, dispatch, media-fetch, retrospective')
 }
 
 export async function stopWorkers(): Promise<void> {
