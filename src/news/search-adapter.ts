@@ -4,6 +4,7 @@ import type { SearchAdapter, SearchHit, SearchOpts } from './types'
 import { NotImplementedError } from './types'
 import { GovGdProvinceAdapter } from './adapters/gov-gd-province'
 import { GovGzCityAdapter } from './adapters/gov-gz-city'
+import { GovPublicSecurityAdapter } from './adapters/gov-public-security'
 
 class MockSearchAdapter implements SearchAdapter {
   readonly kind = 'mock' as const
@@ -205,8 +206,9 @@ const SEARCH_FACTORIES: Record<string, () => SearchAdapter> = {
   // Gov-site scrapers (Plan-D Tasks 13-15, A2-γ). Opt-in via GOV_SCRAPER_ENABLED.
   // Listed in factories so tests / direct lookups can resolve them; only added
   // to `alsoRegister` (below) when env flag is `'true'`.
-  'gov-gd-province':  () => new GovGdProvinceAdapter(),
-  'gov-gz-city':      () => new GovGzCityAdapter(),
+  'gov-gd-province':     () => new GovGdProvinceAdapter(),
+  'gov-gz-city':         () => new GovGzCityAdapter(),
+  'gov-public-security': () => new GovPublicSecurityAdapter(),
 }
 
 const VALID_SEARCH_KEYS = new Set(Object.keys(SEARCH_FACTORIES))
@@ -223,6 +225,7 @@ function _initSearchPool(): Pool<SearchAdapter> {
   if (env.GOV_SCRAPER_ENABLED === 'true') {
     alsoRegister.push('gov-gd-province')
     alsoRegister.push('gov-gz-city')
+    alsoRegister.push('gov-public-security')
   }
   const pool = makePool<SearchAdapter>({
     factories: SEARCH_FACTORIES,
