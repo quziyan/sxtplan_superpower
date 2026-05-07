@@ -29,6 +29,12 @@ const EnvSchema = z.object({
 
   // --- Webhook ingest ---
   WEBHOOK_HMAC_SECRET: z.string().min(16).default('dev-secret-32-chars-replace-prod'),
+
+  // --- Simulated Guangzhou Police Cam adapter (m3) ---
+  SIMULATED_GZP_ENABLED: z.enum(['true', 'false']).default('false'),
+  SIMULATED_GZP_API_KEY: z.string().default('test-key'),
+  SIMULATED_GZP_WEBHOOK_URL: z.string().url().default('http://localhost:3000/webhook/simulated-gzp'),
+  SIMULATED_GZP_FAKE_MEDIA_BASE: z.string().url().default('http://localhost:3000/static/sim-media/'),
 })
 
 export type Env = z.infer<typeof EnvSchema>
