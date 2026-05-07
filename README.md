@@ -91,3 +91,70 @@ cd frontend && bun install && bun run dev   # http://localhost:5173 (代理 /api
 | Redis(docker) | 6379 | |
 | 后端 Hono | 3000 | |
 | 前端 Vite | 5173 | `/api` 代理到 :3000 |
+
+---
+
+## m2 Prediction Core 启动
+
+> 当前阶段:**m2 Prediction Core**(预测核心闭环)
+> 计划:`docs/superpowers/plans/2026-05-06-m2-prediction-core.md`(34 任务,约 4 周)
+
+### 新增 env 变量
+
+`.env` 需要新增以下字段(已在 `.env.example` 提供占位):
+
+```
+LLM_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
+LLM_API_KEY=                    # EX-4:阿里云 dashscope key (LLMConfig.md 已有)
+LLM_MODEL=deepseek-v4-flash
+LLM_TIMEOUT_MS=30000
+
+SEARCH_API_KIND=mock            # mock | bing-news | rss | ddg | aggregator
+SEARCH_API_KEY=                 # bing-news 需要 Azure key
+SEARCH_API_BASE_URL=https://api.bing.microsoft.com/v7.0/news/search
+
+AMAP_GEOCODE_KEY=               # EX-5:可空,fallback 走规则匹配
+```
+
+### m2 新增脚本(暂用)
+
+m2 BullMQ workers 仍为 stub。本期暂不需要单独运行 worker。
+
+### Agent 验证(可选)
+
+```bash
+# 配置好 LLM_API_KEY 后,直接跑一次 inference 客户端测试
+bun test tests/inference/client.test.ts
+```
+
+### m2 范围与未实现部分
+
+**已实现:**
+- 9 张新 schema(predictions / confidence_snapshots / news_items / news_evidence / dispatch_tasks / dispatch_results / media_assets / watch_lists / task_cards)
+- Inference 层(OpenAI 兼容 → dashscope) + JSON parser(支持 markdown 围栏 + 解释前缀)
+- 三类 Agent prompt + 编排:PredictionAgent / NewsTriageAgent / Case retriever (m2 placeholder)
+- News 管道:SearchAdapter (5 kinds — 3 真实 + 2 stub) / Normalizer / Geocoder (AMAP + rule fallback) / Matcher
+- Scheduler:BullMQ + ioredis 队列定义 / K-自适应 cadence / agent_full P1-P5 触发 / 漂移检测器
+- WatchList + TaskCard CRUD + Prediction list/detail/approve/reject/manual-confidence/recompute-now 路由
+- Mock camera adapter + DispatchService(QUEUED → SENT;CANCEL_PENDING → CANCELLED)
+- Frontend:7 业务组件(ConfBar/SourceMix/KpiRow/PredictionTable/InboxCard/ConfidenceTimeline/EvidenceList) + AnalystView/DecisionView 实数据 + PredictionDetail overlay
+
+**未实现(m3+ 范围):**
+- BullMQ workers 真实挂载(m2 仅定义 queues + 同步直调路径)
+- approval → 自动 dispatch 投递(m2 通过显式 `enqueueDispatch` 完成)
+- Webhook ingest(EX-2 真 backend 集成)
+- Retrospective 表 + 二轴 outcome
+- BM25 / 向量化案例库
+- 真实信源接入(目前默认 mock,可切 rss / bing-news,但需配置)
+- 撤单完整链路
+- 任务卡 UI 创建(后端 API 已就位,前端 m3 加 modal)
+- 监视清单 UI 创建(同上)
+- D 角色 ReviewerView 真实数据(m3)
+
+### 5 个外部依赖占位
+
+- **EX-1** Slice 0 真实 (V, T, R) — 客户业务方提供
+- **EX-2** 第一个真实摄像头 backend 契约 — 客户提供
+- **EX-3** 信源选定 — 用户已确认多通道(mock/rss/bing/ddg/aggregator)
+- **EX-4** 阿里云 dashscope key — `prds/LLMConfig.md` 已有,move 到 `.env`(用户明确允许明文)
+- **EX-5** 高德 Geocode key — 客户决定;可空,fallback 已就位
