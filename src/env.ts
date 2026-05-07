@@ -30,6 +30,9 @@ const EnvSchema = z.object({
   // --- Webhook ingest ---
   WEBHOOK_HMAC_SECRET: z.string().min(16).default('dev-secret-32-chars-replace-prod'),
 
+  // --- Camera backend selector (m4) — overrides legacy SIMULATED_GZP_ENABLED when set ---
+  CAMERA_BACKEND_KIND: z.enum(['real-gzp', 'simulated-gzp', 'mock']).optional(),
+
   // --- Simulated Guangzhou Police Cam adapter (m3) ---
   SIMULATED_GZP_ENABLED: z.enum(['true', 'false']).default('false'),
   SIMULATED_GZP_API_KEY: z.string().default('test-key'),

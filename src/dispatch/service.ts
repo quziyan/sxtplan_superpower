@@ -2,11 +2,16 @@ import { and, eq } from 'drizzle-orm'
 import type { Db } from '@/db/client'
 import { dispatchResults, dispatchTasks, type DispatchTask } from '@/db/schema/dispatch'
 import { getAdapter } from './adapter-pool'
+import { getDefaultAdapterKey } from './constants'
 import { canTransition, type DispatchState } from './state-machine'
 
 export type EnqueueDispatchInput = {
   predictionId: string
-  adapterKey?: string  // default 'mock'
+  /**
+   * Optional adapter key. When omitted, resolved via `getDefaultAdapterKey()`
+   * (env-driven: CAMERA_BACKEND_KIND → SIMULATED_GZP_ENABLED → mock).
+   */
+  adapterKey?: string
   paramsJson?: Record<string, unknown>
 }
 
@@ -19,7 +24,7 @@ export type EnqueueDispatchInput = {
  * here it's flat: write QUEUED → adapter.dispatch() → write SENT + externalId.
  */
 export async function enqueueDispatch(db: Db, input: EnqueueDispatchInput): Promise<DispatchTask> {
-  const adapterKey = input.adapterKey ?? 'mock'
+  const adapterKey = input.adapterKey ?? getDefaultAdapterKey()
   const params = input.paramsJson ?? {}
 
   // 1. Write QUEUED row

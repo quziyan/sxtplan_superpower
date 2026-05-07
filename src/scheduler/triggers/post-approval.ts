@@ -1,3 +1,4 @@
+import { getDefaultAdapterKey } from '@/dispatch/constants'
 import { dispatchQueue } from '../queue'
 
 /**
@@ -20,16 +21,18 @@ export type DispatchQueueLike = {
  * dispatch queue so the dispatch worker can asynchronously call the
  * configured camera adapter without blocking the approve response.
  *
- * The default adapter key is `simulated-gzp` per Plan-C; callers may
- * override (e.g. for tests or alternative deployments).
+ * Plan-D Task 4 / ISC-C4: the default adapter key is now sourced from
+ * `getDefaultAdapterKey()` (env-driven: CAMERA_BACKEND_KIND → SIMULATED_GZP_ENABLED → mock)
+ * rather than hardcoded to `'simulated-gzp'`. Callers may still override.
  *
  * The `queue` parameter is exposed for testability — production callers
  * accept the default `dispatchQueue` import.
  */
 export async function triggerDispatchAfterApproval(
   predictionId: string,
-  adapterKey: string = 'simulated-gzp',
+  adapterKey?: string,
   queue: DispatchQueueLike = dispatchQueue,
 ): Promise<void> {
-  await queue.add('dispatch', { predictionId, adapterKey })
+  const key = adapterKey ?? getDefaultAdapterKey()
+  await queue.add('dispatch', { predictionId, adapterKey: key })
 }

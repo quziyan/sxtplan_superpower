@@ -1,4 +1,5 @@
-import { describe, expect, mock, test } from 'bun:test'
+import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test'
+import { resetEnvCacheForTests } from '@/env'
 import {
   triggerDispatchAfterApproval,
   type DispatchQueueLike,
@@ -24,7 +25,31 @@ function makeMockQueue() {
 }
 
 describe('triggerDispatchAfterApproval', () => {
-  test('default adapterKey: adds dispatch job with simulated-gzp', async () => {
+  // Plan-D Task 4 / ISC-C4: default adapterKey is now env-driven via
+  // `getDefaultAdapterKey()`. Snapshot + restore the env vars it consults
+  // so tests in this file (and downstream files) don't see leaked state.
+  let envSnapshot: Record<string, string | undefined>
+
+  beforeEach(() => {
+    envSnapshot = {
+      CAMERA_BACKEND_KIND: process.env.CAMERA_BACKEND_KIND,
+      SIMULATED_GZP_ENABLED: process.env.SIMULATED_GZP_ENABLED,
+    }
+  })
+
+  afterEach(() => {
+    for (const [k, v] of Object.entries(envSnapshot)) {
+      if (v === undefined) delete process.env[k]
+      else process.env[k] = v
+    }
+    resetEnvCacheForTests()
+  })
+
+  test('default adapterKey: env-driven via getDefaultAdapterKey() — falls back to "mock" when no env set', async () => {
+    delete process.env.CAMERA_BACKEND_KIND
+    delete process.env.SIMULATED_GZP_ENABLED
+    resetEnvCacheForTests()
+
     const { queue, add, calls } = makeMockQueue()
 
     await triggerDispatchAfterApproval('pred-abc', undefined, queue)
@@ -34,21 +59,30 @@ describe('triggerDispatchAfterApproval', () => {
     expect(calls[0]!.name).toBe('dispatch')
     expect(calls[0]!.data).toEqual({
       predictionId: 'pred-abc',
-      adapterKey: 'simulated-gzp',
+      adapterKey: 'mock',
     })
   })
 
-  test('default param call (no adapterKey arg) still uses simulated-gzp', async () => {
-    // Verify the default value applies when omitting both adapterKey and queue
-    // would hit Redis — so we still pass the queue but rely on adapterKey default.
+  test('default adapterKey: respects CAMERA_BACKEND_KIND=simulated-gzp', async () => {
+    process.env.CAMERA_BACKEND_KIND = 'simulated-gzp'
+    resetEnvCacheForTests()
+
     const { queue, calls } = makeMockQueue()
 
-    // Two-arg form: only predictionId provided, queue overridden via 3rd arg.
-    // To exercise the "default adapterKey" path we'd ideally call with one arg,
-    // but the production default (`dispatchQueue`) would hit Redis. So we
-    // pass an explicit `undefined` as adapterKey, which the runtime resolves
-    // to the default. This matches how Hono routes will call it (one-arg).
     await triggerDispatchAfterApproval('pred-default', undefined, queue)
+
+    expect(calls.length).toBe(1)
+    expect(calls[0]!.data.adapterKey).toBe('simulated-gzp')
+  })
+
+  test('default adapterKey: respects SIMULATED_GZP_ENABLED=true (m3 legacy flag)', async () => {
+    delete process.env.CAMERA_BACKEND_KIND
+    process.env.SIMULATED_GZP_ENABLED = 'true'
+    resetEnvCacheForTests()
+
+    const { queue, calls } = makeMockQueue()
+
+    await triggerDispatchAfterApproval('pred-legacy', undefined, queue)
 
     expect(calls.length).toBe(1)
     expect(calls[0]!.data.adapterKey).toBe('simulated-gzp')
