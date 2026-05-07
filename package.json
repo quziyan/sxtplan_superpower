@@ -14,7 +14,8 @@
     "db:migrate": "bun src/db/migrate.ts",
     "db:push": "drizzle-kit push",
     "seed:region": "bun src/modules/region/seed.ts",
-    "seed:bootstrap": "bun src/db/seed-bootstrap.ts"
+    "seed:bootstrap": "bun src/db/seed-bootstrap.ts",
+    "seed:taxonomy:police": "bun src/seeds/police-taxonomy.ts"
   },
   "dependencies": {
     "@hono/zod-validator": "^0.4.0",
