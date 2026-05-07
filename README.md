@@ -262,3 +262,58 @@ cd frontend && bun install && bun run dev   # http://localhost:5173
 - `createBullMQWorker(name, handler)` helper(6 worker 复制 connection / concurrency / 监听样板)
 - `DEFAULT_ADAPTER_KEY` 共享常量(避免 `simulated-gzp` 与 `mock` 默认值在不同入口不一致)
 - `GET /retrospectives/aggregate` 端点(T30 客户端用 `?limit=500` 暴露 N+1,服务端聚合更合适)
+
+## m4 — Real Customer Onboarding
+
+> 详细计划见 `docs/superpowers/plans/2026-05-07-m4-real-customer-onboarding.md`,设计 spec 在 `docs/superpowers/specs/2026-05-07-m4-real-customer-onboarding-design.md`。
+
+### 新增 env 变量
+
+m4 引入的 env 字段(全部已加默认值,可在 `.env.example` 找到完整模板):
+
+| 变量 | 默认值 | 用途 |
+|------|--------|------|
+| `CAMERA_BACKEND_KIND` | (unset) | `real-gzp` / `simulated-gzp` / `mock` 三选一,选择 Camera adapter 后端 |
+| `REAL_GZP_BACKEND_URL` | `https://camera-real.example.com.cn` | 真客户 backend URL |
+| `REAL_GZP_API_KEY` | `(empty)` | 客户提供的 API key(EX-8) |
+| `REAL_GZP_REQUEST_TIMEOUT_MS` | `30000` | 客户调用超时 ms |
+| `BING_NEWS_API_KEY` | `(empty)` | Bing News v7 API key;空 = degraded fallback |
+| `GOV_SCRAPER_ENABLED` | `false` | 政务网爬虫总开关(opt-in) |
+| `GOV_GD_PROVINCE_URL` | `https://www.gd.gov.cn/gdywdt/sxtt/` | 广东省政府公示页 |
+| `GOV_GZ_CITY_URL` | `https://www.gz.gov.cn/zwgk/zfxxgkml/` | 广州市政府公示页 |
+| `GOV_PUBLIC_SECURITY_URL` | `https://www.gd.gov.cn/zfxxgk/` | 公安厅公示页 |
+| `AUTO_CANCEL_THRESHOLD` | `0.3` | 置信度低于此值进入撤单候选 |
+| `AUTO_CANCEL_LAG_MINUTES` | `15` | 置信度低于阈值多久后才触发撤单 |
+| `AUTO_CANCEL_NOTIFY` | `true` | 撤单时推送 inbox 通知给 DECIDER |
+
+### 新流程概览
+
+```
+监视清单 → PredictionAgent
+  ↓ (低置信度持续 15min)
+  → AUTO_CANCEL_DISPATCH(audit + inbox 通知)
+  ↓ (高置信度 + REVIEWER 批准 + DECIDER 派单)
+  → real-gzp Camera adapter(真客户 backend HTTP + HMAC)
+  → 客户 webhook 状态推进(IN_PROGRESS / COMPLETED / CANCELLED / FAILED)
+  → 媒体落 OSS(via MediaFetcher)
+  → 自动复盘 → outcome 二轴(HIT/MISS × CAPTURED/NOT_CAPTURED/...)
+```
+
+新闻信号融合:
+
+- m3:RSS + DDG + Aggregator
+- m4 新增:Bing News v7 真接入 + 广东省 / 广州市 / 公安厅 政务网爬虫
+
+### 启动 demo(Slice 1)
+
+详见 `docs/demo/slice-1-runbook.md`。Slice 0 用 `simulated-gzp` 模拟器跑闭环;Slice 1 切到 `real-gzp`,把客户 backend、Bing News 真接入、政务网爬虫一起开起来,验证真客户联调路径。
+
+### m4 重构债务清单(Section 1 已落 5 项)
+
+- ✅ logAudit Db|PgTransaction 联合签名(C-1)
+- ✅ 测试 DB 事务级隔离 demo(C-2,createTestDb 形 contract)
+- ✅ createBullMQWorker helper(C-3,5 worker retrofit)
+- ✅ DEFAULT_ADAPTER_KEY 常量(C-4,env-driven)
+- ✅ GET /retrospectives/aggregate 端点(C-5,MatrixTab server-side)
+
+m5 followup 见 m4 spec § 3 Out of Scope。
