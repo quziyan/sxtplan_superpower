@@ -11,9 +11,9 @@ export type AliyunOssConfig = {
 /**
  * Production OSS backend — wraps the `ali-oss` SDK.
  *
- * Mirrors the constructor + put / signatureUrl logic from `src/media/oss-client.ts`
- * (m3 T10). We hold a single internal client per adapter instance — matches the
- * legacy module-level singleton behavior, but scoped to the adapter so multiple
+ * Replaces the m3-era `src/media/oss-client.ts` module-level singleton (deleted
+ * in cnp-adapters-unify T4). We hold a single internal client per adapter
+ * instance — matches the legacy behavior, but scoped to the adapter so multiple
  * configs (e.g. region failover) are possible later without global mutation.
  *
  * `list` intentionally throws NotImplementedError — production listing should go

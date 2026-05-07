@@ -24,6 +24,7 @@ import { processRefreshJob } from '@/scheduler/workers/refresh'
 import { processRetrospectiveJob } from '@/scheduler/workers/retrospective'
 import { processIngest, type MediaFetchQueueLike } from '@/webhook/ingest'
 import { createTestDb } from '../helpers/test-db'
+import { makeOssStub } from '../helpers/oss-stub'
 
 /**
  * Plan-C T34 / ISC-42 — m3 full-flow E2E.
@@ -394,22 +395,18 @@ describe('m3 full flow E2E (T34 / ISC-42)', () => {
 
     // ── Step 9: drain media-fetch jobs through the worker handler ──────
     // processMediaFetchJob calls fetchAndPersist by default, which uses
-    // the real OSS putObject. We shim putObject via the inner fetcher's
-    // FetcherDeps so no real OSS call happens; the fetched bytes come
-    // from our globalThis.fetch swap (placeholder JPEG).
-    const ossCalls: Array<{ key: string; bytes: number }> = []
-    const fetcherDeps: FetcherDeps = {
-      putObject: async (key, body) => {
-        ossCalls.push({ key, bytes: body.byteLength })
-        return { uri: `oss://m3-test/${key}` }
-      },
-    }
+    // the OssAdapter pool (cnp-adapters-unify T4). We inject a recording
+    // OssAdapter stub via the inner fetcher's FetcherDeps so no real OSS
+    // call happens; the fetched bytes come from our globalThis.fetch
+    // swap (placeholder JPEG).
+    const ossStub = makeOssStub('oss://m3-test/')
+    const fetcherDeps: FetcherDeps = { oss: ossStub }
     for (const j of ourJobs) {
       await processMediaFetchJob(ctx.db, j, {
         fetchAndPersist: (db, task) => fetchAndPersist(db, task, fetcherDeps),
       })
     }
-    expect(ossCalls.length).toBe(2)
+    expect(ossStub._calls.length).toBe(2)
 
     const mediaRows = await ctx.db
       .select()

@@ -7,6 +7,7 @@ import { predictions } from '@/db/schema/prediction'
 import { taskClasses, vehicleClasses } from '@/db/schema/taxonomy'
 import { RETENTION_DAYS } from '@/media/retention'
 import { createTestDb } from '../helpers/test-db'
+import { makeOssStub } from '../helpers/oss-stub'
 
 let ctx: Awaited<ReturnType<typeof createTestDb>>
 beforeAll(async () => { ctx = await createTestDb() })
@@ -67,13 +68,8 @@ describe('fetchAndPersist (MediaFetcher)', () => {
 
     globalThis.fetch = mockFetch(payload)
 
-    const calls: Array<{ key: string; bodyLen: number }> = []
-    const deps: FetcherDeps = {
-      putObject: async (key, body) => {
-        calls.push({ key, bodyLen: body.byteLength })
-        return { uri: `oss://test-bucket/${key}` }
-      },
-    }
+    const oss = makeOssStub('oss://test-bucket/')
+    const deps: FetcherDeps = { oss }
 
     const before = Date.now()
     const row = await fetchAndPersist(
@@ -83,10 +79,10 @@ describe('fetchAndPersist (MediaFetcher)', () => {
     )
     const after = Date.now()
 
-    // putObject got the right key + payload
-    expect(calls.length).toBe(1)
-    expect(calls[0]!.key).toBe(expectedKey)
-    expect(calls[0]!.bodyLen).toBe(payload.byteLength)
+    // OssAdapter.put got the right key + payload
+    expect(oss._calls.length).toBe(1)
+    expect(oss._calls[0]!.key).toBe(expectedKey)
+    expect(oss._calls[0]!.size).toBe(payload.byteLength)
 
     // Returned row reflects what we inserted
     expect(row.dispatchId).toBe(dispatchId)
@@ -111,15 +107,13 @@ describe('fetchAndPersist (MediaFetcher)', () => {
     expect(fetched[0]!.sha256).toBe(expectedSha)
   })
 
-  test('non-2xx fetch throws and does not call putObject or insert a row', async () => {
+  test('non-2xx fetch throws and does not call OssAdapter.put or insert a row', async () => {
     const { db } = ctx
     const dispatchId = await createDispatchRow(db, `media-404-${Date.now()}`)
     globalThis.fetch = mockFetch(new Uint8Array(), { ok: false, status: 404 })
 
-    let putCalls = 0
-    const deps: FetcherDeps = {
-      putObject: async (key) => { putCalls++; return { uri: `oss://x/${key}` } },
-    }
+    const oss = makeOssStub()
+    const deps: FetcherDeps = { oss }
 
     await expect(
       fetchAndPersist(
@@ -129,7 +123,7 @@ describe('fetchAndPersist (MediaFetcher)', () => {
       ),
     ).rejects.toThrow(/fetch https:\/\/example\.test\/missing\.jpg → 404/)
 
-    expect(putCalls).toBe(0)
+    expect(oss._calls.length).toBe(0)
     const rows = await db.select().from(mediaAssets).where(eq(mediaAssets.dispatchId, dispatchId))
     expect(rows.length).toBe(0)
   })
@@ -146,9 +140,8 @@ describe('fetchAndPersist (MediaFetcher)', () => {
       // Distinct payload per case so sha256 differs and key is unique
       const payload = new Uint8Array([c.mediaType.charCodeAt(0), 1, 2, 3])
       globalThis.fetch = mockFetch(payload)
-      const deps: FetcherDeps = {
-        putObject: async (key) => ({ uri: `oss://test-bucket/${key}` }),
-      }
+      const oss = makeOssStub('oss://test-bucket/')
+      const deps: FetcherDeps = { oss }
       const row = await fetchAndPersist(
         db,
         { dispatchId, sourceUrl: `https://example.test/${c.mediaType}`, mediaType: c.mediaType },
@@ -163,9 +156,8 @@ describe('fetchAndPersist (MediaFetcher)', () => {
     const dispatchId = await createDispatchRow(db, `media-ret-${Date.now()}`)
     const payload = new Uint8Array([1, 2, 3, 4])
     globalThis.fetch = mockFetch(payload)
-    const deps: FetcherDeps = {
-      putObject: async (key) => ({ uri: `oss://test-bucket/${key}` }),
-    }
+    const oss = makeOssStub('oss://test-bucket/')
+    const deps: FetcherDeps = { oss }
 
     const before = Date.now()
     const row = await fetchAndPersist(
