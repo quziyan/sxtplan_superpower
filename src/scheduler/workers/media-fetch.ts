@@ -1,9 +1,9 @@
-import { Worker } from 'bullmq'
+import type { Worker } from 'bullmq'
 import type { Db } from '@/db/client'
 import { createDb } from '@/db/client'
-import { loadEnv } from '@/env'
 import type { MediaAsset } from '@/db/schema/dispatch'
 import { fetchAndPersist as defaultFetchAndPersist } from '@/media/fetcher'
+import { createBullMQWorker } from '../helpers/createBullMQWorker'
 
 /**
  * Media-fetch queue job payload (Plan-C T19, ISC-27 §7).
@@ -54,11 +54,9 @@ export async function processMediaFetchJob(
  * Caller is responsible for `worker.close()` on shutdown.
  */
 export function createMediaFetchWorker(): Worker<MediaFetchJobData, MediaAsset> {
-  const env = loadEnv()
   const { db } = createDb('app')
-  return new Worker<MediaFetchJobData, MediaAsset>(
-    'media-fetch',
-    async (job) => processMediaFetchJob(db, job.data),
-    { connection: { url: env.REDIS_URL } },
-  )
+  return createBullMQWorker<MediaFetchJobData, MediaAsset>({
+    name: 'media-fetch',
+    handler: async (job) => processMediaFetchJob(db, job.data),
+  })
 }

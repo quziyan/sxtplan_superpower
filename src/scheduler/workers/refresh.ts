@@ -1,9 +1,9 @@
-import { Worker } from 'bullmq'
+import type { Worker } from 'bullmq'
 import { runPredictionAgent, type RunPredictionAgentInput } from '@/agents/prediction-agent'
 import type { Db } from '@/db/client'
 import { createDb } from '@/db/client'
-import { loadEnv } from '@/env'
 import type { infer as inferFnType } from '@/inference/client'
+import { createBullMQWorker } from '../helpers/createBullMQWorker'
 
 /**
  * Refresh queue job payload.
@@ -47,11 +47,9 @@ export async function processRefreshJob(
  * `worker.close()` on shutdown.
  */
 export function createRefreshWorker(): Worker<RefreshJobData, { confidence: number }> {
-  const env = loadEnv()
   const { db } = createDb('app')
-  return new Worker<RefreshJobData, { confidence: number }>(
-    'refresh',
-    async (job) => processRefreshJob(db, job.data),
-    { connection: { url: env.REDIS_URL } },
-  )
+  return createBullMQWorker<RefreshJobData, { confidence: number }>({
+    name: 'refresh',
+    handler: async (job) => processRefreshJob(db, job.data),
+  })
 }

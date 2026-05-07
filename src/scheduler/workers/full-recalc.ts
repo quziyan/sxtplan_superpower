@@ -1,8 +1,8 @@
-import { Worker } from 'bullmq'
+import type { Worker } from 'bullmq'
 import { createDb } from '@/db/client'
 import type { Db } from '@/db/client'
-import { loadEnv } from '@/env'
 import { shouldTriggerFull, type TriggerReason } from '../full-trigger'
+import { createBullMQWorker } from '../helpers/createBullMQWorker'
 import { refreshQueue } from '../queue'
 
 /**
@@ -58,11 +58,9 @@ export async function processFullRecalcJob(
  * for `worker.close()` on shutdown.
  */
 export function createFullRecalcWorker(): Worker<FullRecalcJobData, TriggerReason> {
-  const env = loadEnv()
   const { db } = createDb('app')
-  return new Worker<FullRecalcJobData, TriggerReason>(
-    'full-recalc',
-    async (job) => processFullRecalcJob(db, job.data),
-    { connection: { url: env.REDIS_URL } },
-  )
+  return createBullMQWorker<FullRecalcJobData, TriggerReason>({
+    name: 'full-recalc',
+    handler: async (job) => processFullRecalcJob(db, job.data),
+  })
 }

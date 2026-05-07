@@ -1,8 +1,8 @@
-import { Worker } from 'bullmq'
+import type { Worker } from 'bullmq'
 import type { Db } from '@/db/client'
 import { createDb } from '@/db/client'
 import { enqueueDispatch } from '@/dispatch/service'
-import { loadEnv } from '@/env'
+import { createBullMQWorker } from '../helpers/createBullMQWorker'
 
 /**
  * Dispatch queue job payload (Plan-C T16, ISC-24).
@@ -70,11 +70,9 @@ export async function processDispatchJob(
  * responsible for `worker.close()` on shutdown.
  */
 export function createDispatchWorker(): Worker<DispatchJobData, DispatchJobResult> {
-  const env = loadEnv()
   const { db } = createDb('app')
-  return new Worker<DispatchJobData, DispatchJobResult>(
-    'dispatch',
-    async (job) => processDispatchJob(db, job.data),
-    { connection: { url: env.REDIS_URL } },
-  )
+  return createBullMQWorker<DispatchJobData, DispatchJobResult>({
+    name: 'dispatch',
+    handler: async (job) => processDispatchJob(db, job.data),
+  })
 }

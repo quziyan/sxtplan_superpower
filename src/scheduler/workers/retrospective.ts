@@ -1,9 +1,9 @@
-import { Worker } from 'bullmq'
+import type { Worker } from 'bullmq'
 import { sql } from 'drizzle-orm'
 import { runRetrospectiveAgent as defaultRunRetrospectiveAgent } from '@/agents/retrospective-agent'
 import { createDb } from '@/db/client'
 import type { Db } from '@/db/client'
-import { loadEnv } from '@/env'
+import { createBullMQWorker } from '../helpers/createBullMQWorker'
 import { retrospectiveQueue } from '../queue'
 
 /**
@@ -171,11 +171,9 @@ export async function processRetrospectiveJob(
  * Caller is responsible for `worker.close()` on shutdown.
  */
 export function createRetrospectiveWorker(): Worker<RetrospectiveJobData, RetrospectiveJobResult> {
-  const env = loadEnv()
   const { db } = createDb('app')
-  return new Worker<RetrospectiveJobData, RetrospectiveJobResult>(
-    'retrospective',
-    async (job) => processRetrospectiveJob(db, job.data),
-    { connection: { url: env.REDIS_URL } },
-  )
+  return createBullMQWorker<RetrospectiveJobData, RetrospectiveJobResult>({
+    name: 'retrospective',
+    handler: async (job) => processRetrospectiveJob(db, job.data),
+  })
 }
