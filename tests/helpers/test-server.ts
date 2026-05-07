@@ -10,6 +10,11 @@ import { webhookRoutes } from '@/webhook/routes'
 import { AppError } from '@/lib/errors'
 import type { Db } from '@/db/client'
 
+const PLACEHOLDER_JPG = Buffer.from(
+  '/9j/4AAQSkZJRgABAQEAAAAAAAD/2wBDAAEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQH/wAARCAABAAEDASIAAhEBAxEB/8QAFQABAQAAAAAAAAAAAAAAAAAAAAr/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/8QAFAEBAAAAAAAAAAAAAAAAAAAAAP/EABQRAQAAAAAAAAAAAAAAAAAAAAD/2gAMAwEAAhEDEQA/AL+AAAA//9k=',
+  'base64',
+)
+
 export function buildTestApp(db: Db) {
   const app = new Hono()
   app.onError((err, c) => {
@@ -18,6 +23,10 @@ export function buildTestApp(db: Db) {
     }
     console.error(err)
     return c.json({ error: { code: 'INTERNAL', message: 'internal error' } }, 500)
+  })
+  app.get('/static/sim-media/:filename', (c) => {
+    c.header('Content-Type', 'image/jpeg')
+    return c.body(PLACEHOLDER_JPG)
   })
   app.route('/auth', authRoutes(db))
   app.route('/regions', regionRoutes(db))

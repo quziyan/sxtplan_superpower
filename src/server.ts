@@ -39,6 +39,19 @@ app.onError((err, c) => {
 
 app.get('/health', (c) => c.json({ status: 'ok', ts: new Date().toISOString() }))
 
+// Static dev endpoint serving placeholder JPG bytes for simulated media URLs.
+// Used by SimulatedGuangzhouPoliceCamAdapter and similar in-process simulators
+// that emit fake media URLs the MediaFetcher must dereference.
+const PLACEHOLDER_JPG = Buffer.from(
+  '/9j/4AAQSkZJRgABAQEAAAAAAAD/2wBDAAEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQH/wAARCAABAAEDASIAAhEBAxEB/8QAFQABAQAAAAAAAAAAAAAAAAAAAAr/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/8QAFAEBAAAAAAAAAAAAAAAAAAAAAP/EABQRAQAAAAAAAAAAAAAAAAAAAAD/2gAMAwEAAhEDEQA/AL+AAAA//9k=',
+  'base64',
+)
+
+app.get('/static/sim-media/:filename', (c) => {
+  c.header('Content-Type', 'image/jpeg')
+  return c.body(PLACEHOLDER_JPG)
+})
+
 app.route('/auth', authRoutes(db))
 app.route('/regions', regionRoutes(db))
 app.route('/taxonomy', taxonomyRoutes(db))
