@@ -10,6 +10,7 @@
     "lint": "biome check src tests",
     "format": "biome format --write src tests",
     "test": "bun test",
+    "test:integration": "INTEGRATION_TESTS=true bun test tests/integrations/",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "bun src/db/migrate.ts",
     "db:push": "drizzle-kit push",
