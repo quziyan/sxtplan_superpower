@@ -30,6 +30,16 @@ export interface OssAdapter {
    * AliyunOssAdapter implements-and-throws (use OSS console for production listing).
    */
   list?(prefix?: string): Promise<string[]>
+
+  /**
+   * Optional: delete a single object by key (test/demo cleanup only).
+   *
+   * Used by the demo-data cleanup CLI (au-T9) to clear seeded `media/demo-*`
+   * objects from the in-memory MockOssAdapter. AliyunOssAdapter implements-
+   * and-throws — production deletion belongs in OSS lifecycle rules / console,
+   * not in this code path.
+   */
+  delete?(key: string): Promise<void>
 }
 
 /**

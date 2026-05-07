@@ -42,6 +42,10 @@ export class MockOssAdapter implements OssAdapter {
     return [...this.store.keys()].filter((k) => k.startsWith(prefix))
   }
 
+  async delete(k: string): Promise<void> {
+    this.store.delete(k)
+  }
+
   // ─── test helpers (non-contract; underscore-prefixed) ───────────────────────
 
   /** Test-only: drops every stored object. */

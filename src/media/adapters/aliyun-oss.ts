@@ -72,4 +72,10 @@ export class AliyunOssAdapter implements OssAdapter {
       'list not supported on AliyunOssAdapter — use OSS console',
     )
   }
+
+  async delete(_key: string): Promise<void> {
+    throw new NotImplementedError(
+      'delete not supported on AliyunOssAdapter — use OSS console / lifecycle rules',
+    )
+  }
 }

@@ -598,27 +598,212 @@ async function collectCounts(db: Db, alreadySeeded: boolean): Promise<SeedDemoCo
   }
 }
 
+// ─── public API: cleanup ───────────────────────────────────────────────────
+/**
+ * Result of `cleanupDemoData()` — count of rows removed per table, plus the
+ * number of mock OSS keys cleared. All `[DEMO]%`-prefixed seed rows + cascading
+ * dependents are deleted; mock OSS objects under the `media/demo-` prefix are
+ * also wiped (best-effort, after the DB tx commits).
+ */
+export type CleanupResult = {
+  retrospectives: number
+  caseLibraryEntries: number
+  mediaAssets: number
+  dispatchResults: number
+  dispatchTasks: number
+  predictions: number
+  confidenceSnapshots: number
+  watchlists: number
+  taskCards: number
+  ossKeysCleared: number
+}
+
+/**
+ * Inverse of `seedDemoData()` — removes every `[DEMO]`-tagged row + cascades.
+ *
+ * Strategy: anchor on the two `name LIKE '[DEMO]%'` tables (`watch_lists` +
+ * `task_cards`). Any prediction whose `source_id` points at one of those
+ * anchors is a demo prediction; from there we cascade to dispatch_tasks →
+ * dispatch_results / media_assets, and to confidence_snapshots /
+ * retrospectives → case_library_entries by prediction_id / retrospective_id.
+ *
+ * The delete chain runs inside a single transaction so a partial failure
+ * rolls back cleanly. OSS object cleanup runs AFTER the tx commits and is
+ * best-effort — Aliyun's adapter throws NotImplementedError; we swallow it
+ * with a warning. The MockOssAdapter exposes `delete(key)` (au-T9) and runs
+ * to completion.
+ *
+ * Idempotent — running on a clean DB returns all-zero counts and does not
+ * error. Safe to invoke repeatedly.
+ */
+export async function cleanupDemoData(db: Db, oss: OssAdapter): Promise<CleanupResult> {
+  const demoLike = `${DEMO}%`
+
+  // ─── DB: cascading delete in FK-respecting order, wrapped in a tx ────────
+  const dbCounts = await db.transaction(async (tx) => {
+    // 1. case_library_entries — depends on retrospectives
+    const cleRows = await tx.execute<{ id: string }>(sql`
+      DELETE FROM case_library_entries
+      WHERE retrospective_id IN (
+        SELECT id FROM retrospectives WHERE summary_md LIKE ${demoLike}
+      )
+      RETURNING id
+    `)
+
+    // 2. retrospectives — depends on predictions
+    const retroRows = await tx.execute<{ id: string }>(sql`
+      DELETE FROM retrospectives WHERE summary_md LIKE ${demoLike} RETURNING id
+    `)
+
+    // 3. media_assets — depends on dispatch_tasks (which depend on demo predictions)
+    const mediaRows = await tx.execute<{ id: string }>(sql`
+      DELETE FROM media_assets
+      WHERE dispatch_id IN (
+        SELECT id FROM dispatch_tasks WHERE prediction_id IN (
+          SELECT id FROM predictions WHERE source_id IN (
+            SELECT id FROM watch_lists WHERE name LIKE ${demoLike}
+            UNION SELECT id FROM task_cards WHERE name LIKE ${demoLike}
+          )
+        )
+      )
+      RETURNING id
+    `)
+
+    // 4. dispatch_results — depends on dispatch_tasks
+    const dispResRows = await tx.execute<{ id: string }>(sql`
+      DELETE FROM dispatch_results
+      WHERE dispatch_id IN (
+        SELECT id FROM dispatch_tasks WHERE prediction_id IN (
+          SELECT id FROM predictions WHERE source_id IN (
+            SELECT id FROM watch_lists WHERE name LIKE ${demoLike}
+            UNION SELECT id FROM task_cards WHERE name LIKE ${demoLike}
+          )
+        )
+      )
+      RETURNING id
+    `)
+
+    // 5. dispatch_tasks — depends on predictions
+    const dispRows = await tx.execute<{ id: string }>(sql`
+      DELETE FROM dispatch_tasks
+      WHERE prediction_id IN (
+        SELECT id FROM predictions WHERE source_id IN (
+          SELECT id FROM watch_lists WHERE name LIKE ${demoLike}
+          UNION SELECT id FROM task_cards WHERE name LIKE ${demoLike}
+        )
+      )
+      RETURNING id
+    `)
+
+    // 6. confidence_snapshots — depends on predictions
+    const snapRows = await tx.execute<{ id: string }>(sql`
+      DELETE FROM confidence_snapshots
+      WHERE prediction_id IN (
+        SELECT id FROM predictions WHERE source_id IN (
+          SELECT id FROM watch_lists WHERE name LIKE ${demoLike}
+          UNION SELECT id FROM task_cards WHERE name LIKE ${demoLike}
+        )
+      )
+      RETURNING id
+    `)
+
+    // 7. predictions — anchored on demo watchlists/taskcards by source_id
+    const predRows = await tx.execute<{ id: string }>(sql`
+      DELETE FROM predictions
+      WHERE source_id IN (
+        SELECT id FROM watch_lists WHERE name LIKE ${demoLike}
+        UNION SELECT id FROM task_cards WHERE name LIKE ${demoLike}
+      )
+      RETURNING id
+    `)
+
+    // 8. task_cards — anchor table
+    const tcRows = await tx.execute<{ id: string }>(sql`
+      DELETE FROM task_cards WHERE name LIKE ${demoLike} RETURNING id
+    `)
+
+    // 9. watch_lists — anchor table
+    const wlRows = await tx.execute<{ id: string }>(sql`
+      DELETE FROM watch_lists WHERE name LIKE ${demoLike} RETURNING id
+    `)
+
+    return {
+      caseLibraryEntries: cleRows.length,
+      retrospectives: retroRows.length,
+      mediaAssets: mediaRows.length,
+      dispatchResults: dispResRows.length,
+      dispatchTasks: dispRows.length,
+      confidenceSnapshots: snapRows.length,
+      predictions: predRows.length,
+      taskCards: tcRows.length,
+      watchlists: wlRows.length,
+    }
+  })
+
+  // ─── OSS: best-effort key cleanup AFTER tx commits ──────────────────────
+  // Mock adapter implements list+delete; Aliyun throws NotImplementedError on
+  // both — we swallow + warn so production cleanup runs (and the operator gets
+  // a clear hint that OSS lifecycle/console is the right tool there).
+  let ossKeysCleared = 0
+  if (typeof oss.list === 'function' && typeof oss.delete === 'function') {
+    try {
+      const keys = await oss.list('media/demo-')
+      for (const k of keys) {
+        await oss.delete(k)
+        ossKeysCleared += 1
+      }
+    } catch (e) {
+      console.warn(
+        `[cleanup] OSS clear skipped (${oss.key}): ${e instanceof Error ? e.message : String(e)}`,
+      )
+    }
+  } else {
+    console.warn(
+      `[cleanup] OSS adapter '${oss.key}' does not support list+delete; skipping object cleanup`,
+    )
+  }
+
+  return { ...dbCounts, ossKeysCleared }
+}
+
 // ─── CLI entry point ───────────────────────────────────────────────────────
 async function main() {
   const verbose = process.argv.includes('--verbose')
-  console.log('[seed:demo-data] start')
+  const isCleanup = process.argv.includes('--cleanup')
 
   // Force a fresh OssAdapter read (in case of test pollution).
   resetOssAdapterForTests()
   const oss = getOssAdapter()
   const { db, sql: pg } = createDb('admin')
   try {
-    const counts = await seedDemoData(db, oss)
-    if (counts.alreadySeeded) {
-      console.log(`[seed:demo-data] already seeded (idempotent skip)`)
+    if (isCleanup) {
+      console.log('[seed:demo-data] cleanup mode')
+      const counts = await cleanupDemoData(db, oss)
+      console.log(
+        `[cleanup] removed ${counts.retrospectives} retros / ${counts.mediaAssets} media / ` +
+          `${counts.dispatchTasks} dispatches / ${counts.dispatchResults} results / ` +
+          `${counts.predictions} predictions / ${counts.watchlists} watchlists / ` +
+          `${counts.taskCards} taskcards / ${counts.confidenceSnapshots} confidence_snapshots`,
+      )
+      console.log(`[cleanup] cleared ${counts.ossKeysCleared} mock OSS keys`)
+      if (verbose) {
+        console.log(JSON.stringify(counts, null, 2))
+      }
+      console.log('[seed:demo-data] cleanup done')
+    } else {
+      console.log('[seed:demo-data] start')
+      const counts = await seedDemoData(db, oss)
+      if (counts.alreadySeeded) {
+        console.log(`[seed:demo-data] already seeded (idempotent skip)`)
+      }
+      if (verbose) {
+        console.log(JSON.stringify(counts, null, 2))
+      }
+      console.log(
+        `[seed:demo-data] done — ${counts.watchlists} wl / ${counts.taskCards} tc / ` +
+          `${counts.predictions} pred / ${counts.retrospectives} retro / ${counts.mediaAssets} media`,
+      )
     }
-    if (verbose) {
-      console.log(JSON.stringify(counts, null, 2))
-    }
-    console.log(
-      `[seed:demo-data] done — ${counts.watchlists} wl / ${counts.taskCards} tc / ` +
-        `${counts.predictions} pred / ${counts.retrospectives} retro / ${counts.mediaAssets} media`,
-    )
   } finally {
     await pg.end()
   }
