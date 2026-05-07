@@ -181,12 +181,24 @@ export type SeedDemoCounts = {
 }
 
 export async function seedDemoData(db: Db, oss: OssAdapter): Promise<SeedDemoCounts> {
-  // 0a. idempotency probe
+  // 0a. idempotency probe — completion-aware (Finding 2).
+  //
+  // We probe retrospectives (the LAST table the seed populates) rather than
+  // watchlists (the FIRST). If retros == 15, the previous run finished and we
+  // skip. If retros > 0 but != 15, a prior run crashed mid-way — make that a
+  // hard error so the operator must explicitly clean up before re-running,
+  // rather than silently returning `alreadySeeded: true` on a half-seeded DB.
   const existing = await db.execute<{ n: number }>(sql`
-    SELECT COUNT(*)::int AS n FROM watch_lists WHERE name LIKE ${`${DEMO}%`}
+    SELECT COUNT(*)::int AS n FROM retrospectives WHERE summary_md LIKE ${`${DEMO}%`}
   `)
-  if ((existing[0]?.n ?? 0) > 0) {
+  const existingRetros = existing[0]?.n ?? 0
+  if (existingRetros === 15) {
     return await collectCounts(db, true)
+  }
+  if (existingRetros > 0) {
+    throw new Error(
+      `demo seed found ${existingRetros}/15 retrospectives — partial seed detected; run \`bun src/seeds/demo-data.ts --cleanup\` first (after au-T9 ships) or manually DELETE FROM retrospectives WHERE summary_md LIKE '[DEMO]%' (and cascade dependents)`,
+    )
   }
 
   // 0b. preconditions — admin user, regions, taxonomy
@@ -357,10 +369,13 @@ export async function seedDemoData(db: Db, oss: OssAdapter): Promise<SeedDemoCou
   let mediaTotal = 0
   let resultsTotal = 0
 
-  // Read placeholder bytes once (Bun.file).
+  // Read placeholder bytes once (Bun.file). Anchor to module dir so the path
+  // resolves correctly regardless of the caller's CWD (Finding 1: prior
+  // path.resolve('./assets/...') threw ENOENT when invoked from any
+  // subdirectory).
   const placeholderBuffers: Buffer[] = []
   for (const fn of PLACEHOLDERS) {
-    const filePath = path.resolve('./assets/demo-placeholders/', fn)
+    const filePath = path.resolve(import.meta.dir, '../../assets/demo-placeholders', fn)
     const buf = Buffer.from(await Bun.file(filePath).arrayBuffer())
     placeholderBuffers.push(buf)
   }

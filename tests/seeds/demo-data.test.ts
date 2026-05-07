@@ -192,4 +192,41 @@ describe('seedDemoData', () => {
     const keys = await oss.list('media/demo-')
     expect(keys.length).toBe(0)
   })
+
+  test('partial seed (retroCount != 0 && != 15) throws hard error', async () => {
+    // Simulate a crashed prior run: delete all but 1 [DEMO] retro. The
+    // case_library_entries.retrospective_id FK cascades on delete, so we just
+    // delete the retro rows — Postgres takes care of dependents.
+    //
+    // Idempotency probe should now find retroCount=1 → throw "partial seed
+    // detected" rather than silently returning alreadySeeded:true.
+    await ctx.db.execute(sql`
+      DELETE FROM retrospectives
+      WHERE summary_md LIKE '[DEMO]%'
+        AND id NOT IN (
+          SELECT id FROM retrospectives
+          WHERE summary_md LIKE '[DEMO]%'
+          ORDER BY id
+          LIMIT 1
+        )
+    `)
+    const remaining = await ctx.db.execute<{ n: number }>(
+      sql`SELECT COUNT(*)::int AS n FROM retrospectives WHERE summary_md LIKE '[DEMO]%'`,
+    )
+    expect(remaining[0]?.n).toBe(1)
+
+    const oss = new MockOssAdapter()
+    let caught: unknown
+    try {
+      await seedDemoData(ctx.db, oss)
+    } catch (e) {
+      caught = e
+    }
+    expect(caught).toBeInstanceOf(Error)
+    expect((caught as Error).message).toContain('partial seed detected')
+    expect((caught as Error).message).toContain('1/15')
+    // No new media writes either.
+    const keys = await oss.list('media/demo-')
+    expect(keys.length).toBe(0)
+  })
 })
