@@ -42,10 +42,20 @@ export function MatrixTab() {
   const stats = useMemo(() => {
     if (!agg) return { total: 0, hit: 0, miss: 0, captured: 0, overridden: 0 }
     const total = agg.total
-    const hit = Math.round(agg.hitRate * total)
-    const miss = Math.round(agg.missRate * total)
-    const captured = Math.round(agg.capturedRate * total)
-    const overridden = Math.round(agg.overriddenRate * total)
+    // Plan-D Task 5 / post-review fix: derive integer counts directly from
+    // `byOutcome` instead of `Math.round(rate * total)` — rate-multiplication
+    // is lossy at non-trivial totals due to JSON float precision. Mirrors the
+    // backend's reduce so frontend & backend stay byte-consistent.
+    const hit = agg.byOutcome
+      .filter(r => r.predictionOutcome === 'HIT')
+      .reduce((s, r) => s + r.count, 0)
+    const miss = agg.byOutcome
+      .filter(r => r.predictionOutcome === 'MISS')
+      .reduce((s, r) => s + r.count, 0)
+    const captured = agg.byOutcome
+      .filter(r => r.captureOutcome === 'CAPTURED')
+      .reduce((s, r) => s + r.count, 0)
+    const overridden = agg.byOutcome.reduce((s, r) => s + r.overriddenCount, 0)
     return { total, hit, miss, captured, overridden }
   }, [agg])
 
