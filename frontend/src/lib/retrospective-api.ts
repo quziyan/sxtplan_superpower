@@ -82,3 +82,31 @@ export async function overrideRetrospective(id: string, input: OverrideInput): P
   })
   return res.retrospective
 }
+
+// ─── Plan-D Task 5 / ISC-C5: aggregate endpoint ────────────────────────────
+// Mirror of backend `RetroAggregateRow` / `RetroAggregateResult` in
+// src/modules/retrospective/service.ts. Used by MatrixTab to skip a 500-row
+// fetch + client-side group-by.
+
+export type RetroAggregateRow = {
+  predictionOutcome: PredictionOutcome
+  captureOutcome: CaptureOutcome
+  count: number
+  overriddenCount: number
+}
+
+export type RetroAggregateResult = {
+  total: number
+  byOutcome: RetroAggregateRow[]
+  hitRate: number
+  missRate: number
+  capturedRate: number
+  overriddenRate: number
+}
+
+export async function aggregateRetrospectives(): Promise<RetroAggregateResult> {
+  const res = await api<{ ok: true; aggregate: RetroAggregateResult }>(
+    '/retrospectives/aggregate',
+  )
+  return res.aggregate
+}

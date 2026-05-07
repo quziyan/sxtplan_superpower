@@ -8,6 +8,7 @@ import {
   type CaptureOutcome,
   type PredictionOutcome,
   type RetrospectiveListFilter,
+  aggregateRetrospectives,
   getRetrospective,
   listRetrospectives,
   overrideRetrospective,
@@ -54,6 +55,15 @@ export function retrospectiveRoutes(db: Db) {
     const filter = parseFilterFromQuery(c.req.query())
     const items = await listRetrospectives(db, filter)
     return c.json({ ok: true, items })
+  })
+
+  // GET /retrospectives/aggregate — Plan-D Task 5 / ISC-C5
+  // Server-side aggregation for the Reviewer MatrixTab. Returns a
+  // 3×4 outcome matrix plus rolled-up KPI rates. Must be registered
+  // BEFORE the `/:id` catch-all so Hono does not match `aggregate` as an id.
+  app.get('/aggregate', authRequired(db), async (c) => {
+    const result = await aggregateRetrospectives(db)
+    return c.json({ ok: true, aggregate: result })
   })
 
   // GET /retrospectives/:id

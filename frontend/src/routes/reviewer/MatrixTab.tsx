@@ -1,17 +1,13 @@
 import { useEffect, useMemo, useState } from 'react'
 import { KpiRow, OutcomeMatrix, type KpiTile } from '@/components'
 import type { CellKey, OutcomeCounts } from '@/components/OutcomeMatrix'
-import { listRetrospectives, type RetrospectiveListItem } from '@/lib/retrospective-api'
+import { aggregateRetrospectives, type RetroAggregateResult } from '@/lib/retrospective-api'
 
 // Plan-C T30 / ISC-38 — Matrix tab.
-// Aggregation is client-side per Plan-C scope: no dedicated /retrospectives/aggregate
-// endpoint exists yet (T23 only ships list/get/override). We pull up to 500 items, group
-// by `${predictionOutcome}+${captureOutcome}`, then surface KPI rates above the matrix.
-//
-// Note: 500-row hard cap is a Plan-C-stated limit; if/when the dataset outgrows that,
-// the right move is a backend aggregation endpoint, not paginating client-side.
-
-const AGG_LIMIT = 500
+// Plan-D Task 5 / ISC-C5: switched from client-side aggregation
+// (listRetrospectives + JS group-by, capped at 500 rows) to a single
+// server aggregate call. The backend executes one SQL GROUP BY and
+// returns the 3×4 outcome matrix + KPI rates already rolled up.
 
 function pct(n: number, total: number): string {
   if (total === 0) return '0%'
@@ -19,15 +15,15 @@ function pct(n: number, total: number): string {
 }
 
 export function MatrixTab() {
-  const [items, setItems] = useState<RetrospectiveListItem[]>([])
+  const [agg, setAgg] = useState<RetroAggregateResult | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
     let cancelled = false
     setLoading(true); setError(null)
-    listRetrospectives({ limit: AGG_LIMIT })
-      .then(rows => { if (!cancelled) setItems(rows) })
+    aggregateRetrospectives()
+      .then(result => { if (!cancelled) setAgg(result) })
       .catch(e => { if (!cancelled) setError((e as Error).message) })
       .finally(() => { if (!cancelled) setLoading(false) })
     return () => { cancelled = true }
@@ -35,24 +31,23 @@ export function MatrixTab() {
 
   const counts: OutcomeCounts = useMemo(() => {
     const acc: OutcomeCounts = {}
-    for (const it of items) {
-      const k: CellKey = `${it.predictionOutcome}+${it.captureOutcome}`
-      acc[k] = (acc[k] ?? 0) + 1
+    if (!agg) return acc
+    for (const row of agg.byOutcome) {
+      const k: CellKey = `${row.predictionOutcome}+${row.captureOutcome}`
+      acc[k] = row.count
     }
     return acc
-  }, [items])
+  }, [agg])
 
   const stats = useMemo(() => {
-    const total = items.length
-    let hit = 0, miss = 0, captured = 0, overridden = 0
-    for (const it of items) {
-      if (it.predictionOutcome === 'HIT')   hit++
-      if (it.predictionOutcome === 'MISS')  miss++
-      if (it.captureOutcome    === 'CAPTURED') captured++
-      if (it.outcomeOverridden)             overridden++
-    }
+    if (!agg) return { total: 0, hit: 0, miss: 0, captured: 0, overridden: 0 }
+    const total = agg.total
+    const hit = Math.round(agg.hitRate * total)
+    const miss = Math.round(agg.missRate * total)
+    const captured = Math.round(agg.capturedRate * total)
+    const overridden = Math.round(agg.overriddenRate * total)
     return { total, hit, miss, captured, overridden }
-  }, [items])
+  }, [agg])
 
   const kpis: KpiTile[] = [
     { label: '复盘总数',   value: stats.total },
@@ -64,7 +59,7 @@ export function MatrixTab() {
 
   if (loading) return <div className="empty">加载中…</div>
   if (error)   return <div className="empty" style={{ color: 'var(--c-bad)' }}>加载失败:{error}</div>
-  if (items.length === 0) return <div className="empty" style={{ padding: 'var(--sp-6)' }}>暂无复盘数据</div>
+  if (!agg || agg.total === 0) return <div className="empty" style={{ padding: 'var(--sp-6)' }}>暂无复盘数据</div>
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sp-5)' }}>

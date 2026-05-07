@@ -1,4 +1,4 @@
-import { and, desc, eq } from 'drizzle-orm'
+import { and, desc, eq, sql } from 'drizzle-orm'
 import type { Db } from '@/db/client'
 import { operationAudit } from '@/db/schema/audit'
 import { predictions } from '@/db/schema/prediction'
@@ -258,3 +258,75 @@ export async function overrideRetrospective(
   return updated
 }
 
+/**
+ * Plan-D Task 5 / ISC-C5: server-side aggregation for the Reviewer MatrixTab.
+ *
+ * Replaces the client-side GROUP BY in the frontend (which fetched up to 500
+ * rows then bucketed in JS) with a single SQL aggregation. The matrix is
+ * 3 (predictionOutcome) × 4 (captureOutcome) = 12 cells max; one row per
+ * non-empty (predictionOutcome, captureOutcome) pair is emitted, plus rolled-up
+ * KPI rates (HIT, MISS, CAPTURED, overridden) over `total`.
+ */
+export type RetroAggregateRow = {
+  predictionOutcome: PredictionOutcome
+  captureOutcome: CaptureOutcome
+  count: number
+  overriddenCount: number
+}
+
+export type RetroAggregateResult = {
+  total: number
+  byOutcome: RetroAggregateRow[] // up to 12 rows (3 × 4)
+  hitRate: number // HIT / total
+  missRate: number // MISS / total
+  capturedRate: number // CAPTURED / total
+  overriddenRate: number // overridden / total
+}
+
+export async function aggregateRetrospectives(db: Db): Promise<RetroAggregateResult> {
+  const rows = await db.execute<{
+    prediction_outcome: string
+    capture_outcome: string
+    cnt: string
+    overridden_cnt: string
+  }>(sql`
+    SELECT prediction_outcome, capture_outcome,
+           COUNT(*)::text AS cnt,
+           SUM(CASE WHEN outcome_overridden THEN 1 ELSE 0 END)::text AS overridden_cnt
+    FROM retrospectives
+    GROUP BY prediction_outcome, capture_outcome
+  `)
+
+  const byOutcome: RetroAggregateRow[] = (rows as unknown as Array<{
+    prediction_outcome: string
+    capture_outcome: string
+    cnt: string
+    overridden_cnt: string
+  }>).map((r) => ({
+    predictionOutcome: r.prediction_outcome as PredictionOutcome,
+    captureOutcome: r.capture_outcome as CaptureOutcome,
+    count: Number(r.cnt),
+    overriddenCount: Number(r.overridden_cnt),
+  }))
+
+  const total = byOutcome.reduce((s, r) => s + r.count, 0)
+  const hit = byOutcome
+    .filter((r) => r.predictionOutcome === 'HIT')
+    .reduce((s, r) => s + r.count, 0)
+  const miss = byOutcome
+    .filter((r) => r.predictionOutcome === 'MISS')
+    .reduce((s, r) => s + r.count, 0)
+  const captured = byOutcome
+    .filter((r) => r.captureOutcome === 'CAPTURED')
+    .reduce((s, r) => s + r.count, 0)
+  const overridden = byOutcome.reduce((s, r) => s + r.overriddenCount, 0)
+
+  return {
+    total,
+    byOutcome,
+    hitRate: total > 0 ? hit / total : 0,
+    missRate: total > 0 ? miss / total : 0,
+    capturedRate: total > 0 ? captured / total : 0,
+    overriddenRate: total > 0 ? overridden / total : 0,
+  }
+}
