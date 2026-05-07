@@ -13,6 +13,7 @@
 
 import type { Worker } from 'bullmq'
 import { closeAllQueues } from './queue'
+import { scheduleAutoCancelTick } from './workers/auto-cancel'
 import { scheduleCadenceTick } from './workers/cadence'
 import { createDispatchWorker } from './workers/dispatch'
 import { createFullRecalcWorker } from './workers/full-recalc'
@@ -38,6 +39,8 @@ export async function startWorkers(): Promise<void> {
   console.log('[scheduler] cadence tick scheduled (60s)')
   intervals.push(scheduleRetrospectiveTick())
   console.log('[scheduler] retrospective tick scheduled (5m)')
+  intervals.push(scheduleAutoCancelTick())
+  console.log('[scheduler] auto-cancel tick scheduled (5m)')
   console.log('[scheduler] queues defined: refresh, full-recalc, news-ingest, dispatch, media-fetch, retrospective')
 }
 

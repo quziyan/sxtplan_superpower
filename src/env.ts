@@ -52,6 +52,14 @@ const EnvSchema = z.object({
   SIMULATED_GZP_WEBHOOK_URL: z.string().url().default('http://localhost:3000/webhook/simulated-gzp'),
   SIMULATED_GZP_FAKE_MEDIA_BASE: z.string().url().default('http://localhost:3000/static/sim-media/'),
 
+  // --- Auto-cancel (Plan-D B1) ---
+  // Tick scans dispatch_tasks whose prediction confidence dipped under
+  // AUTO_CANCEL_THRESHOLD (0..1) for at least AUTO_CANCEL_LAG_MINUTES
+  // (suppresses single-snapshot noise). NOTIFY toggles the DECIDER inbox push.
+  AUTO_CANCEL_THRESHOLD: z.coerce.number().min(0).max(1).default(0.3),
+  AUTO_CANCEL_LAG_MINUTES: z.coerce.number().min(1).max(120).default(15),
+  AUTO_CANCEL_NOTIFY: z.enum(['true', 'false']).default('true'),
+
   // --- 阿里云 OSS (m3, EX-6) ---
   OSS_ADAPTER_KEY: z.enum(['mock', 'aliyun']).default('mock'),
   OSS_ENDPOINT: z.string().default('https://oss-cn-shenzhen.aliyuncs.com'),
