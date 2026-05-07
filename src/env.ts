@@ -34,6 +34,11 @@ const EnvSchema = z.object({
   // --- Camera backend selector (m4) — overrides legacy SIMULATED_GZP_ENABLED when set ---
   CAMERA_BACKEND_KIND: z.enum(['real-gzp', 'simulated-gzp', 'mock']).optional(),
 
+  // --- Real Guangzhou Police Cam adapter (m4) — effective when CAMERA_BACKEND_KIND=real-gzp ---
+  REAL_GZP_BACKEND_URL: z.string().url().default('https://camera-real.example.com.cn'),
+  REAL_GZP_API_KEY: z.string().default(''),
+  REAL_GZP_REQUEST_TIMEOUT_MS: z.coerce.number().default(30000),
+
   // --- Simulated Guangzhou Police Cam adapter (m3) ---
   SIMULATED_GZP_ENABLED: z.enum(['true', 'false']).default('false'),
   SIMULATED_GZP_API_KEY: z.string().default('test-key'),

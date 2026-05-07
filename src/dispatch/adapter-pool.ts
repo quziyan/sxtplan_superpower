@@ -1,6 +1,7 @@
 import type { CameraAdapter } from './types'
 import { MockCameraAdapter } from './adapters/mock'
 import { SimulatedGuangzhouPoliceCamAdapter } from './adapters/simulated-gzp'
+import { RealGuangzhouPoliceCamAdapter } from './adapters/real-gzp'
 import { loadEnv } from '@/env'
 import { makePool, type Pool } from '@/integrations/external-adapter'
 
@@ -36,6 +37,13 @@ export function initAdapterPool(): void {
   const env = loadEnv()
   const factories: Record<string, () => CameraAdapter> = {
     mock: () => new MockCameraAdapter(),
+    'real-gzp': () =>
+      new RealGuangzhouPoliceCamAdapter({
+        apiKey: env.REAL_GZP_API_KEY,
+        webhookSecret: env.WEBHOOK_HMAC_SECRET,
+        backendBaseUrl: env.REAL_GZP_BACKEND_URL,
+        requestTimeoutMs: env.REAL_GZP_REQUEST_TIMEOUT_MS,
+      }),
   }
 
   const alsoRegister: string[] = []
@@ -53,6 +61,10 @@ export function initAdapterPool(): void {
         cancelDelayMs: 5000,
       })
     alsoRegister.push('simulated-gzp')
+  }
+
+  if (env.CAMERA_BACKEND_KIND === 'real-gzp') {
+    alsoRegister.push('real-gzp')
   }
 
   _pool = makePool<CameraAdapter>({

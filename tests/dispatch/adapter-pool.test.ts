@@ -7,6 +7,7 @@ import {
 } from '@/dispatch/adapter-pool'
 import { resetEnvCacheForTests } from '@/env'
 import { SimulatedGuangzhouPoliceCamAdapter } from '@/dispatch/adapters/simulated-gzp'
+import { RealGuangzhouPoliceCamAdapter } from '@/dispatch/adapters/real-gzp'
 import type {
   CameraAdapter,
   CancelAck,
@@ -20,6 +21,10 @@ const KEYS = [
   'SIMULATED_GZP_API_KEY',
   'SIMULATED_GZP_WEBHOOK_URL',
   'SIMULATED_GZP_FAKE_MEDIA_BASE',
+  'CAMERA_BACKEND_KIND',
+  'REAL_GZP_BACKEND_URL',
+  'REAL_GZP_API_KEY',
+  'REAL_GZP_REQUEST_TIMEOUT_MS',
 ] as const
 let snapshot: Record<string, string | undefined> = {}
 
@@ -62,6 +67,17 @@ describe('adapter-pool env-driven registration', () => {
     const a = getAdapter('simulated-gzp')
     expect(a.key).toBe('simulated-gzp')
     expect(a).toBeInstanceOf(SimulatedGuangzhouPoliceCamAdapter)
+  })
+
+  test('real-gzp adapter registered when CAMERA_BACKEND_KIND=real-gzp', () => {
+    process.env.CAMERA_BACKEND_KIND = 'real-gzp'
+    process.env.REAL_GZP_API_KEY = 'test-real-key'
+    resetEnvCacheForTests()
+    resetAdapterPoolForTests()
+    initAdapterPool()
+    const a = getAdapter('real-gzp')
+    expect(a.key).toBe('real-gzp')
+    expect(a).toBeInstanceOf(RealGuangzhouPoliceCamAdapter)
   })
 })
 
