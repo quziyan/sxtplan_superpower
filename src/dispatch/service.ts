@@ -1,7 +1,8 @@
-import { eq } from 'drizzle-orm'
+import { and, eq } from 'drizzle-orm'
 import type { Db } from '@/db/client'
-import { dispatchTasks, type DispatchTask } from '@/db/schema/dispatch'
+import { dispatchResults, dispatchTasks, type DispatchTask } from '@/db/schema/dispatch'
 import { getAdapter } from './adapter-pool'
+import { canTransition, type DispatchState } from './state-machine'
 
 export type EnqueueDispatchInput = {
   predictionId: string
@@ -68,4 +69,73 @@ export async function requestCancel(db: Db, dispatchId: string, reason: string):
     updatedAt: new Date(),
   }).where(eq(dispatchTasks.id, dispatchId)).returning()
   return cancelled!
+}
+
+export type AdvanceFromWebhookInput = {
+  externalId: string
+  adapterKey: string
+  newState: DispatchState
+  payload?: Record<string, unknown>
+  /** Reserved for future media ingestion (m3) — accepted but not yet persisted. */
+  mediaUrls?: string[]
+}
+
+/**
+ * Advance a dispatch task in response to an inbound webhook (or polled status).
+ *
+ * Lookup is by (adapterKey, externalId) — the adapter-side identity, since
+ * webhooks don't carry our internal UUID. Transition is validated against
+ * the state machine; illegal transitions throw rather than silently no-op.
+ *
+ * Side effects beyond the state column:
+ *  - IN_PROGRESS sets `callbackAt` (first time the camera reported back)
+ *  - COMPLETED / FAILED set `completedAt`
+ *  - COMPLETED with payload also writes a `dispatch_results` row
+ */
+export async function advanceFromWebhook(
+  db: Db,
+  params: AdvanceFromWebhookInput,
+): Promise<DispatchTask> {
+  const [task] = await db
+    .select()
+    .from(dispatchTasks)
+    .where(
+      and(
+        eq(dispatchTasks.adapterKey, params.adapterKey),
+        eq(dispatchTasks.externalId, params.externalId),
+      ),
+    )
+  if (!task) {
+    throw new Error(`unknown dispatch ${params.adapterKey}/${params.externalId}`)
+  }
+  if (!canTransition(task.state as DispatchState, params.newState)) {
+    throw new Error(`invalid transition ${task.state} → ${params.newState}`)
+  }
+
+  const now = new Date()
+  const updates = {
+    state: params.newState,
+    updatedAt: now,
+    ...(params.newState === 'IN_PROGRESS' ? { callbackAt: now } : {}),
+    ...(params.newState === 'COMPLETED' || params.newState === 'FAILED'
+      ? { completedAt: now }
+      : {}),
+  } satisfies Partial<typeof dispatchTasks.$inferInsert>
+
+  const [updated] = await db
+    .update(dispatchTasks)
+    .set(updates)
+    .where(eq(dispatchTasks.id, task.id))
+    .returning()
+  if (!updated) throw new Error(`dispatch ${task.id} update returned no row`)
+
+  if (params.newState === 'COMPLETED' && params.payload) {
+    await db.insert(dispatchResults).values({
+      dispatchId: task.id,
+      payloadJson: params.payload,
+      capturedAt: now,
+    })
+  }
+
+  return updated
 }
