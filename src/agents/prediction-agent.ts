@@ -38,6 +38,7 @@ type EvidenceRow = {
 export async function runPredictionAgent(
   db: Db,
   input: RunPredictionAgentInput,
+  inferFn: typeof infer = infer,
 ): Promise<PredictionAgentOutput> {
   // 1. Load prediction
   const [p] = await db.select().from(predictions).where(eq(predictions.id, input.predictionId))
@@ -129,7 +130,7 @@ export async function runPredictionAgent(
   }
 
   // 6. Call LLM
-  const llmRes = await infer({
+  const llmRes = await inferFn({
     messages: [
       { role: 'system', content: PREDICTION_AGENT_SYSTEM },
       { role: 'user', content: renderPredictionUserMsg(agentInput) },

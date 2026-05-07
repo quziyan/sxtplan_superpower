@@ -1,11 +1,12 @@
-import { afterAll, beforeAll, describe, expect, mock, test } from 'bun:test'
+import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
 import { sql } from 'drizzle-orm'
 import { runNewsTriageAgent } from '@/agents/news-triage-agent'
 import { newsItems, predictions } from '@/db/schema/prediction'
 import { vehicleClasses, taskClasses } from '@/db/schema/taxonomy'
+import type { InferenceResponse } from '@/inference/types'
 import { createTestDb } from '../helpers/test-db'
 
-let RELEVANT_OUTPUT = {
+const RELEVANT_OUTPUT = {
   relevant: true, weight: 'HIGH',
   reasoning: '茂名应急局明确点名抢险救援车,且时间地区吻合,信号强',
   extracted_signals: ['II 级响应启动', '高喷消防车前置'],
@@ -19,12 +20,13 @@ const IRRELEVANT_OUTPUT = {
 
 let nextOutput: object = RELEVANT_OUTPUT
 
-mock.module('@/inference/client', () => ({
-  infer: async () => ({
-    text: JSON.stringify(nextOutput),
-    promptTokens: 100, completionTokens: 30, totalTokens: 130, model: 'mock',
-  }),
-}))
+const mockInfer = async (): Promise<InferenceResponse> => ({
+  text: JSON.stringify(nextOutput),
+  promptTokens: 100,
+  completionTokens: 30,
+  totalTokens: 130,
+  model: 'mock',
+})
 
 let ctx: Awaited<ReturnType<typeof createTestDb>>
 beforeAll(async () => { ctx = await createTestDb() })
@@ -67,7 +69,7 @@ describe('runNewsTriageAgent', () => {
     nextOutput = RELEVANT_OUTPUT
     const stamp = `tri-rel-${Date.now()}`
     const { prediction, news } = await setup(db, stamp)
-    const out = await runNewsTriageAgent(db, { newsId: news.id, predictionId: prediction.id })
+    const out = await runNewsTriageAgent(db, { newsId: news.id, predictionId: prediction.id }, mockInfer)
     expect(out.relevant).toBe(true)
     expect(out.weight).toBe('HIGH')
 
@@ -90,7 +92,7 @@ describe('runNewsTriageAgent', () => {
     nextOutput = IRRELEVANT_OUTPUT
     const stamp = `tri-irr-${Date.now()}`
     const { prediction, news } = await setup(db, stamp)
-    const out = await runNewsTriageAgent(db, { newsId: news.id, predictionId: prediction.id })
+    const out = await runNewsTriageAgent(db, { newsId: news.id, predictionId: prediction.id }, mockInfer)
     expect(out.relevant).toBe(false)
 
     const evCount = await db.execute<{ n: number }>(sql`

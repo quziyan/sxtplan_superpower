@@ -1,14 +1,10 @@
-import { afterAll, beforeAll, describe, expect, mock, test } from 'bun:test'
+import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
 import { sql } from 'drizzle-orm'
 import { runPredictionAgent } from '@/agents/prediction-agent'
 import { confidenceSnapshots, newsItems, predictions } from '@/db/schema/prediction'
 import { vehicleClasses, taskClasses } from '@/db/schema/taxonomy'
+import type { InferenceResponse } from '@/inference/types'
 import { createTestDb } from '../helpers/test-db'
-
-// Import the real infer so we can restore it after tests.
-// Bun mock.module is global per worker; we restore to avoid bleeding into
-// other files (e.g. tests/inference/client.test.ts) when bun test runs all.
-import * as clientModule from '@/inference/client'
 
 const FAKE_OUTPUT = {
   confidence: 75,
@@ -19,25 +15,13 @@ const FAKE_OUTPUT = {
   key_signals: ['II 级响应启动'],
 }
 
-const realInfer = clientModule.infer
-
-// Replace infer via spyOn so we can restore it per-test cleanly.
-// We install the mock before each test and restore after.
-// This avoids the global mock.module bleed that affects client.test.ts.
-const inferSpy = mock(async (): ReturnType<typeof clientModule.infer> => ({
+const mockInfer = async (): Promise<InferenceResponse> => ({
   text: JSON.stringify(FAKE_OUTPUT),
   promptTokens: 100,
   completionTokens: 50,
   totalTokens: 150,
   model: 'mock',
-}))
-
-// Patch the module export in place (works because ESM live bindings are mutable
-// from the importer side in Bun's CommonJS-compatible module system).
-// Alternatively we use mock.module which is the canonical Bun approach.
-mock.module('@/inference/client', () => ({
-  infer: inferSpy,
-}))
+})
 
 let ctx: Awaited<ReturnType<typeof createTestDb>>
 beforeAll(async () => {
@@ -45,11 +29,6 @@ beforeAll(async () => {
 })
 afterAll(async () => {
   await ctx.cleanup()
-  // Restore the real implementation so client.test.ts isn't affected
-  // when bun runs all files in the same worker process.
-  mock.module('@/inference/client', () => ({
-    infer: realInfer,
-  }))
 })
 
 const poly: GeoJSON.Polygon = {
@@ -86,7 +65,7 @@ describe('runPredictionAgent', () => {
     const stamp = `pa-full-${Date.now()}`
     const { prediction } = await setup(db, stamp)
 
-    const out = await runPredictionAgent(db, { predictionId: prediction.id, kind: 'FULL' })
+    const out = await runPredictionAgent(db, { predictionId: prediction.id, kind: 'FULL' }, mockInfer)
     expect(out.confidence).toBe(75)
 
     // Verify snapshot was written
@@ -109,7 +88,7 @@ describe('runPredictionAgent', () => {
     const stamp = `pa-incr-bad-${Date.now()}`
     const { prediction } = await setup(db, stamp)
     await expect(
-      runPredictionAgent(db, { predictionId: prediction.id, kind: 'INCR' }),
+      runPredictionAgent(db, { predictionId: prediction.id, kind: 'INCR' }, mockInfer),
     ).rejects.toThrow(/newEvidenceNewsIds/)
   })
 
@@ -130,7 +109,7 @@ describe('runPredictionAgent', () => {
       predictionId: prediction.id,
       kind: 'INCR',
       newEvidenceNewsIds: [news!.id],
-    })
+    }, mockInfer)
     expect(out.confidence).toBe(75)
 
     // Verify INCR snapshot

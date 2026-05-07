@@ -21,6 +21,7 @@ export type RunNewsTriageInput = {
 export async function runNewsTriageAgent(
   db: Db,
   input: RunNewsTriageInput,
+  inferFn: typeof infer = infer,
 ): Promise<NewsTriageOutput> {
   // 1. Load news
   const [n] = await db.select().from(newsItems).where(eq(newsItems.id, input.newsId))
@@ -62,7 +63,7 @@ export async function runNewsTriageAgent(
   }
 
   // 5. LLM
-  const llmRes = await infer({
+  const llmRes = await inferFn({
     messages: [
       { role: 'system', content: NEWS_TRIAGE_SYSTEM },
       { role: 'user', content: renderNewsTriageUserMsg(triageInput) },
