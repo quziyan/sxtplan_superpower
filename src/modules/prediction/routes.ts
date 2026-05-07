@@ -1,13 +1,13 @@
 import { Hono } from 'hono'
 import { zValidator } from '@hono/zod-validator'
 import { z } from 'zod'
-import { and, desc, eq, inArray } from 'drizzle-orm'
+import { and, asc, desc, eq, inArray } from 'drizzle-orm'
 import type { Db } from '@/db/client'
 import { authRequired, roleRequired, type AuthContext } from '@/auth/middleware'
 import { logAudit } from '@/audit/log'
 import { BadRequest, NotFound } from '@/lib/errors'
 import { triggerDispatchAfterApproval } from '@/scheduler/triggers/post-approval'
-import { dispatchTasks } from '@/db/schema/dispatch'
+import { dispatchTasks, mediaAssets, type DispatchTask, type MediaAsset } from '@/db/schema/dispatch'
 import { requestCancel } from '@/dispatch/service'
 import { writeConfidenceSnapshot } from './confidence'
 import { getPrediction, getSnapshots, listPredictions, transitionStatus } from './service'
@@ -49,7 +49,40 @@ export function predictionRoutes(db: Db, deps: PredictionRouteDeps = {}) {
     const pred = await getPrediction(db, c.req.param('id'))
     if (!pred) throw NotFound(`prediction ${c.req.param('id')} not found`)
     const snaps = await getSnapshots(db, pred.id)
-    return c.json({ prediction: pred, snapshots: snaps })
+
+    // Plan-C T27 / ISC-35: inline dispatchTasks (with nested mediaAssets)
+    // alongside the prediction detail. One round trip from the UI for the
+    // detail view; avoids a separate /dispatches/:id/media fanout. Media
+    // is loaded with a single IN(...) query and grouped in JS to avoid N+1.
+    const dispatches = await db
+      .select()
+      .from(dispatchTasks)
+      .where(eq(dispatchTasks.predictionId, pred.id))
+      .orderBy(asc(dispatchTasks.createdAt))
+
+    const dispatchIds = dispatches.map((d) => d.id)
+    const mediaByDispatch = new Map<string, MediaAsset[]>()
+    if (dispatchIds.length > 0) {
+      const allMedia = await db
+        .select()
+        .from(mediaAssets)
+        .where(inArray(mediaAssets.dispatchId, dispatchIds))
+        .orderBy(asc(mediaAssets.createdAt))
+      for (const m of allMedia) {
+        const bucket = mediaByDispatch.get(m.dispatchId)
+        if (bucket) bucket.push(m)
+        else mediaByDispatch.set(m.dispatchId, [m])
+      }
+    }
+
+    const dispatchTasksOut: Array<DispatchTask & { mediaAssets: MediaAsset[] }> =
+      dispatches.map((d) => ({ ...d, mediaAssets: mediaByDispatch.get(d.id) ?? [] }))
+
+    return c.json({
+      prediction: pred,
+      snapshots: snaps,
+      dispatchTasks: dispatchTasksOut,
+    })
   })
 
   app.post('/:id/approve', authRequired(db), roleRequired('DECIDER'), async (c) => {

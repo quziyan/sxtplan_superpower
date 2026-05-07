@@ -1,7 +1,14 @@
 import { api } from './api'
+import type { DispatchTask } from './dispatch-api'
+import type { MediaAsset } from './media-api'
 
 export type PredictionStatus = 'PROPOSED' | 'APPROVED' | 'REJECTED' | 'DISPATCHED' | 'EXPIRED' | 'COMPLETED'
 export type HalfDay = 'AM' | 'PM'
+
+// Plan-C T27 / ISC-35: GET /predictions/:id inlines dispatchTasks (with
+// nested mediaAssets per dispatch) so the detail view loads in one round
+// trip. Mirrors the backend response shape from src/modules/prediction/routes.ts.
+export type DispatchTaskWithMedia = DispatchTask & { mediaAssets: MediaAsset[] }
 
 export type Prediction = {
   id: string
@@ -45,8 +52,14 @@ export async function listPredictions(opts: { status?: PredictionStatus; limit?:
   return api<Prediction[]>(`/predictions${qs ? `?${qs}` : ''}`)
 }
 
-export async function getPredictionDetail(id: string): Promise<{ prediction: Prediction; snapshots: ConfidenceSnapshot[] }> {
-  return api<{ prediction: Prediction; snapshots: ConfidenceSnapshot[] }>(`/predictions/${id}`)
+export type PredictionDetailResponse = {
+  prediction: Prediction
+  snapshots: ConfidenceSnapshot[]
+  dispatchTasks: DispatchTaskWithMedia[]
+}
+
+export async function getPredictionDetail(id: string): Promise<PredictionDetailResponse> {
+  return api<PredictionDetailResponse>(`/predictions/${id}`)
 }
 
 export async function approvePrediction(id: string): Promise<{ ok: boolean; prediction: Prediction }> {

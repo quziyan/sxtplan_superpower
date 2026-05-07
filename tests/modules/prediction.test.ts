@@ -5,7 +5,7 @@ import { hashPassword } from '@/auth/password'
 import { roles, userRoles, users } from '@/db/schema/user'
 import { vehicleClasses, taskClasses } from '@/db/schema/taxonomy'
 import { predictions } from '@/db/schema/prediction'
-import { dispatchTasks } from '@/db/schema/dispatch'
+import { dispatchTasks, mediaAssets } from '@/db/schema/dispatch'
 import { operationAudit } from '@/db/schema/audit'
 import { authRoutes } from '@/auth/routes'
 import { predictionRoutes } from '@/modules/prediction/routes'
@@ -119,6 +119,85 @@ describe('prediction routes', () => {
       headers: { cookie: deciderCookie },
     })
     expect(res.status).toBe(404)
+  })
+
+  // Plan-C T27 / ISC-35: detail response inlines dispatchTasks (with nested
+  // mediaAssets) so the UI can render DispatchPanel + MediaGallery in one
+  // round trip. Empty dispatchTasks for predictions without dispatches; one
+  // dispatch with two media assets when seeded.
+  test('GET /predictions/:id inlines dispatchTasks + mediaAssets per dispatch', async () => {
+    // Fresh prediction with NO dispatches → dispatchTasks is empty array.
+    const stamp = `inline-${Date.now()}`
+    const reg = (await ctx.db.execute<{ id: string; version: number }>(sql`
+      INSERT INTO regions (kind, name, version, geom)
+      VALUES ('AD_HOC', ${'inline-region-' + stamp}, 1, ST_GeomFromGeoJSON(${JSON.stringify(poly)}))
+      RETURNING id, version
+    `))[0]!
+    const [vc] = await ctx.db.insert(vehicleClasses).values({ name: `vc-inline-${stamp}`, level: 1 }).returning()
+    const [tc] = await ctx.db.insert(taskClasses).values({ name: `tc-inline-${stamp}`, level: 1 }).returning()
+    const [predEmpty] = await ctx.db.insert(predictions).values({
+      sourceKind: 'WATCHLIST', sourceId: vc!.id,
+      regionId: reg.id, regionVersion: reg.version,
+      windowDate: new Date('2026-10-01'), windowHalf: 'AM',
+      vehicleClassId: vc!.id, taskClassId: tc!.id,
+      kDays: 7, expiresAt: new Date(Date.now() + 7 * 86400_000),
+    }).returning()
+    const emptyRes = await app.request(`/predictions/${predEmpty!.id}`, { headers: { cookie: deciderCookie } })
+    expect(emptyRes.status).toBe(200)
+    const emptyBody = await emptyRes.json() as {
+      prediction: { id: string }
+      snapshots: unknown[]
+      dispatchTasks: Array<{ id: string; mediaAssets: unknown[] }>
+    }
+    expect(Array.isArray(emptyBody.dispatchTasks)).toBe(true)
+    expect(emptyBody.dispatchTasks.length).toBe(0)
+
+    // Seed prediction + 1 dispatch + 2 media assets → response has 1 dispatch
+    // with 2 media. ordered by createdAt ASC.
+    const [predFull] = await ctx.db.insert(predictions).values({
+      sourceKind: 'WATCHLIST', sourceId: vc!.id,
+      regionId: reg.id, regionVersion: reg.version,
+      windowDate: new Date('2026-10-02'), windowHalf: 'PM',
+      vehicleClassId: vc!.id, taskClassId: tc!.id,
+      kDays: 5, expiresAt: new Date(Date.now() + 5 * 86400_000),
+    }).returning()
+    const [dispatch] = await ctx.db.insert(dispatchTasks).values({
+      predictionId: predFull!.id, adapterKey: 'mock', state: 'COMPLETED',
+      externalId: `mock-inline-${stamp}`, paramsJson: {},
+    }).returning()
+    await ctx.db.insert(mediaAssets).values([
+      {
+        dispatchId: dispatch!.id, ossUri: `oss://b/inline-${stamp}-a.jpg`,
+        sourceUrl: `https://cdn.example/inline-${stamp}-a.jpg`,
+        mediaType: 'image', sizeBytes: 1024, sha256: 'a'.repeat(64), scanStatus: 'CLEAN',
+      },
+      {
+        dispatchId: dispatch!.id, ossUri: `oss://b/inline-${stamp}-b.jpg`,
+        sourceUrl: `https://cdn.example/inline-${stamp}-b.jpg`,
+        mediaType: 'image', sizeBytes: 2048, sha256: 'b'.repeat(64), scanStatus: 'CLEAN',
+      },
+    ])
+
+    const fullRes = await app.request(`/predictions/${predFull!.id}`, { headers: { cookie: deciderCookie } })
+    expect(fullRes.status).toBe(200)
+    const fullBody = await fullRes.json() as {
+      prediction: { id: string }
+      snapshots: unknown[]
+      dispatchTasks: Array<{
+        id: string; predictionId: string; adapterKey: string; state: string
+        mediaAssets: Array<{ id: string; dispatchId: string; mediaType: string; sizeBytes: number | null }>
+      }>
+    }
+    expect(fullBody.prediction.id).toBe(predFull!.id)
+    expect(fullBody.dispatchTasks.length).toBe(1)
+    expect(fullBody.dispatchTasks[0]!.id).toBe(dispatch!.id)
+    expect(fullBody.dispatchTasks[0]!.adapterKey).toBe('mock')
+    expect(fullBody.dispatchTasks[0]!.mediaAssets.length).toBe(2)
+    // All media belong to the seeded dispatch.
+    for (const m of fullBody.dispatchTasks[0]!.mediaAssets) {
+      expect(m.dispatchId).toBe(dispatch!.id)
+      expect(m.mediaType).toBe('image')
+    }
   })
 
   test('POST /predictions/:id/manual-confidence requires ANALYST role', async () => {

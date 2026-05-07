@@ -1,6 +1,6 @@
 import { api } from './api'
 
-// Plan-C T25 / ISC-33: frontend client for dispatch task data.
+// Plan-C T25 / ISC-33 + T27 / ISC-35: frontend client for dispatch task data.
 // Mirrors the m2 API client style (see prediction-api.ts).
 //
 // Backend route shapes:
@@ -8,14 +8,12 @@ import { api } from './api'
 //        body: { reason: string }
 //        -> { ok: true, dispatch: DispatchTask }
 //
-// Endpoint gap (noted for T27 — DispatchPanel):
-//   There is NO list-dispatch-by-prediction route yet, and the existing
-//   GET /predictions/:id route only returns { prediction, snapshots } —
-//   it does NOT inline dispatch tasks. T27 must either:
-//     (a) extend GET /predictions/:id to inline a dispatchTasks[] field, or
-//     (b) add a new route, e.g. GET /predictions/:id/dispatches, and a
-//         corresponding `listDispatchesByPrediction()` here.
-//   Until then this client only exposes the cancel call.
+// Listing dispatches: T27 resolved the gap by inlining `dispatchTasks[]`
+// (with nested `mediaAssets`) inside GET /predictions/:id — see
+// PredictionDetailResponse in prediction-api.ts. There is no separate
+// list-by-prediction route; the detail call is the single source of truth.
+// Types here are still the canonical DispatchTask shape consumed by
+// DispatchPanel + by the cancel response below.
 
 export type DispatchState =
   | 'QUEUED'

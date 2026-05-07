@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { ConfidenceTimeline } from './ConfidenceTimeline'
+import { DispatchPanel } from './DispatchPanel'
 import { EvidenceList } from './EvidenceList'
 import { Status } from './Status'
 import { ConfBar } from './ConfBar'
@@ -8,14 +9,13 @@ import {
   approvePrediction,
   getPredictionDetail,
   rejectPrediction,
-  type ConfidenceSnapshot,
-  type Prediction,
+  type PredictionDetailResponse,
 } from '@/lib/prediction-api'
 
 export function PredictionDetail({
   predictionId, onMutated,
 }: { predictionId: string; onMutated?: () => void }) {
-  const [data, setData] = useState<{ prediction: Prediction; snapshots: ConfidenceSnapshot[] } | null>(null)
+  const [data, setData] = useState<PredictionDetailResponse | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
 
@@ -82,6 +82,13 @@ export function PredictionDetail({
           <div className="section-h__sub">m2 简化:展示快照 reasoning;真证据列表 m3 接</div>
         </div>
         <EvidenceList snapshots={data.snapshots} />
+      </section>
+      <section>
+        <div className="section-h">
+          <div className="section-h__title">调度记录</div>
+          <div className="section-h__sub">{data.dispatchTasks.length} 个调度任务</div>
+        </div>
+        <DispatchPanel dispatches={data.dispatchTasks} />
       </section>
       {p.status === 'PROPOSED' && (
         <section style={{ display: 'flex', gap: 'var(--sp-2)' }}>
