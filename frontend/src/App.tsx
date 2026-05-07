@@ -1,5 +1,7 @@
-import type { RoleKey } from '@/components/topbar/RoleTabs'
+import { useState } from 'react'
+import { DetailPane, PredictionDetail } from '@/components'
 import { Topbar } from '@/components/topbar/Topbar'
+import type { RoleKey } from '@/components/topbar/RoleTabs'
 import { useAuth } from '@/lib/useAuth'
 import { Login } from '@/routes/Login'
 import { AnalystView } from '@/routes/analyst/AnalystView'
@@ -8,13 +10,11 @@ import { ReviewerView } from '@/routes/reviewer/ReviewerView'
 
 export default function App() {
   const { state, refresh, switchRole, logout } = useAuth()
+  const [openPrediction, setOpenPrediction] = useState<string | null>(null)
+  const [refreshKey, setRefreshKey] = useState(0)
 
   if (state.status === 'loading') {
-    return (
-      <div style={{ height: '100vh', display: 'grid', placeItems: 'center', color: 'var(--c-text-3)' }}>
-        加载中…
-      </div>
-    )
+    return <div style={{ height: '100vh', display: 'grid', placeItems: 'center', color: 'var(--c-text-3)' }}>加载中…</div>
   }
   if (state.status === 'anonymous') return <Login onLoggedIn={refresh} />
 
@@ -30,9 +30,9 @@ export default function App() {
         onRoleChange={switchRole}
         onLogout={logout}
       />
-      <div className="app__body">
-        {role === 'ANALYST'  && <AnalystView />}
-        {role === 'DECIDER'  && <DecisionView />}
+      <div className="app__body" key={refreshKey}>
+        {role === 'ANALYST'  && <AnalystView onOpenPrediction={setOpenPrediction} />}
+        {role === 'DECIDER'  && <DecisionView onOpenPrediction={setOpenPrediction} />}
         {role === 'REVIEWER' && <ReviewerView />}
         {!role && (
           <div className="empty" style={{ marginTop: 'var(--sp-8)' }}>
@@ -40,6 +40,23 @@ export default function App() {
           </div>
         )}
       </div>
+
+      <DetailPane
+        open={!!openPrediction}
+        onClose={() => setOpenPrediction(null)}
+        title="预测详情"
+        sub={openPrediction}
+      >
+        {openPrediction && (
+          <PredictionDetail
+            predictionId={openPrediction}
+            onMutated={() => {
+              setOpenPrediction(null)
+              setRefreshKey(k => k + 1)  // 强制重渲染当前角色视图
+            }}
+          />
+        )}
+      </DetailPane>
     </div>
   )
 }
