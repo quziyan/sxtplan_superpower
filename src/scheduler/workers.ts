@@ -1,20 +1,27 @@
 // m3: refresh worker wired (Plan-C T13). Other workers (full-recalc, news-ingest,
 // dispatch) remain stubbed and will be added incrementally.
+// m3: cadence tick wired (Plan-C T14) — periodic INCR enqueue for due predictions.
 // The queue definitions live in queue.ts.
 
 import type { Worker } from 'bullmq'
 import { closeAllQueues } from './queue'
+import { scheduleCadenceTick } from './workers/cadence'
 import { createRefreshWorker } from './workers/refresh'
 
 const workers: Worker[] = []
+const intervals: ReturnType<typeof setInterval>[] = []
 
 export async function startWorkers(): Promise<void> {
   workers.push(createRefreshWorker())
   console.log('[scheduler] refresh worker registered')
+  intervals.push(scheduleCadenceTick())
+  console.log('[scheduler] cadence tick scheduled (60s)')
   console.log('[scheduler] queues defined: refresh, full-recalc, news-ingest, dispatch')
 }
 
 export async function stopWorkers(): Promise<void> {
+  for (const t of intervals) clearInterval(t)
+  intervals.length = 0
   await Promise.allSettled(workers.map((w) => w.close()))
   workers.length = 0
 }
