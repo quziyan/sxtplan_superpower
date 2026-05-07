@@ -2,14 +2,13 @@ import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
 import { Hono } from 'hono'
 import type { ContentfulStatusCode } from 'hono/utils/http-status'
 import { eq, sql } from 'drizzle-orm'
-import { runPredictionAgent } from '@/agents/prediction-agent'
 import { runRetrospectiveAgent } from '@/agents/retrospective-agent'
 import { authRoutes } from '@/auth/routes'
 import { hashPassword } from '@/auth/password'
 import { dispatchTasks, mediaAssets } from '@/db/schema/dispatch'
 import { roles, userRoles, users } from '@/db/schema/user'
 import { taskClasses, vehicleClasses } from '@/db/schema/taxonomy'
-import { registerAdapter } from '@/dispatch/adapter-pool'
+import { initAdapterPool, registerAdapter, resetAdapterPoolForTests } from '@/dispatch/adapter-pool'
 import { SimulatedGuangzhouPoliceCamAdapter } from '@/dispatch/adapters/simulated-gzp'
 import type { FetcherDeps } from '@/media/fetcher'
 import { fetchAndPersist } from '@/media/fetcher'
@@ -202,6 +201,12 @@ afterAll(async () => {
   // would hit real localhost:9999 and surface as test noise.
   await new Promise((r) => setTimeout(r, 200))
   globalThis.fetch = originalFetch
+  // Restore the adapter pool to its production state. beforeAll mutated the
+  // module-level Map via registerAdapter() to inject 50/100/30ms delays;
+  // without this, subsequent tests inheriting `simulated-gzp` in the same
+  // bun process would see those delays + this test's mock api key/secret.
+  resetAdapterPoolForTests()
+  initAdapterPool()
   await ctx.cleanup()
 })
 
