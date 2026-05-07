@@ -432,13 +432,15 @@ describe('POST /predictions/:id/cancel — Plan-C T24', () => {
     expect((audit!.after as { state: string }).state).toBe('CANCEL_PENDING')
   })
 
-  test('dispatch already COMPLETED → 400 with cancel-rejection error', async () => {
+  test('dispatch already COMPLETED → 404 (no active dispatch in cancel-able state)', async () => {
     const id = await freshPrediction(`completed-${Date.now()}`)
     // Seed a COMPLETED dispatch — it's terminal so the route's "active" lookup
-    // (QUEUED/SENT/IN_PROGRESS only) won't find it. To test the BadRequest
-    // path from requestCancel we need an "active" row first, but a COMPLETED
-    // row is excluded from the active lookup, so this test exercises the
-    // 404-no-active branch.
+    // (QUEUED/SENT/IN_PROGRESS only) won't find it. The route returns 404
+    // for "no active dispatch" rather than reaching the requestCancel call
+    // that could yield a 400. The 400-from-canTransition path is unreachable
+    // through this route today; see the comment in routes.ts near the
+    // BadRequest branch. canTransition rejection of CANCEL_PENDING/CANCELLED
+    // is exercised at the service layer in tests/dispatch/cancel-flow.test.ts.
     await ctx.db.insert(dispatchTasks).values({
       predictionId: id, adapterKey: 'mock', state: 'COMPLETED',
       externalId: `mock-completed-${Date.now()}`, paramsJson: {},

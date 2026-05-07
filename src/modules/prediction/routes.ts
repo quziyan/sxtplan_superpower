@@ -172,6 +172,8 @@ export function predictionRoutes(db: Db, deps: PredictionRouteDeps = {}) {
         // Surface state-machine + concurrency errors as 400 — the dispatch is
         // in a state where cancel can't proceed. Adapter errors are swallowed
         // inside requestCancel and never reach here.
+        // 400 covers future state additions to active lookup that fail canTransition;
+        // currently unreachable since QUEUED/SENT/IN_PROGRESS all permit CANCEL_PENDING.
         throw BadRequest((e as Error).message)
       }
     },
