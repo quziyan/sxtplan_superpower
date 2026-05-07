@@ -124,9 +124,7 @@ export async function runPredictionAgent(
       sourceKind: r.source_kind,
       title: r.title,
       summary: r.summary_zh ?? r.raw_snippet ?? '',
-      publishedAt: r.published_at instanceof Date
-        ? r.published_at.toISOString()
-        : r.published_at ?? undefined,
+      ...(r.published_at ? { publishedAt: r.published_at instanceof Date ? r.published_at.toISOString() : r.published_at } : {}),
     })),
   }
 
