@@ -6,6 +6,7 @@ import { taxonomyRoutes } from '@/modules/taxonomy/routes'
 import { watchlistRoutes } from '@/modules/watchlist/routes'
 import { taskcardRoutes } from '@/modules/taskcard/routes'
 import { predictionRoutes } from '@/modules/prediction/routes'
+import { retrospectiveRoutes } from '@/modules/retrospective/routes'
 import { webhookRoutes } from '@/webhook/routes'
 import { AppError } from '@/lib/errors'
 import type { Db } from '@/db/client'
@@ -34,6 +35,7 @@ export function buildTestApp(db: Db) {
   app.route('/watchlists', watchlistRoutes(db))
   app.route('/taskcards', taskcardRoutes(db))
   app.route('/predictions', predictionRoutes(db))
+  app.route('/retrospectives', retrospectiveRoutes(db))
   app.route('/webhook', webhookRoutes(db))
   return app
 }
