@@ -25,6 +25,13 @@ const EnvSchema = z.object({
   SEARCH_API_BASE_URL: z.string().url().default('https://api.bing.microsoft.com/v7.0/news/search'),
   BING_NEWS_API_KEY: z.string().default(''),  // empty = degraded fallback (Plan-D Task 7)
 
+  // --- Gov-site scrapers (Plan-D Task 12, A2-γ) ---
+  // Disabled by default. Concrete subclasses (Tasks 13-15) read these URLs.
+  GOV_SCRAPER_ENABLED: z.enum(['true', 'false']).default('false'),
+  GOV_GD_PROVINCE_URL: z.string().url().default('https://www.gd.gov.cn/gdywdt/sxtt/'),
+  GOV_GZ_CITY_URL: z.string().url().default('https://www.gz.gov.cn/zwgk/zfxxgkml/'),
+  GOV_PUBLIC_SECURITY_URL: z.string().url().default('https://www.gd.gov.cn/zfxxgk/'),
+
   // --- 高德地理编码 ---
   AMAP_GEOCODE_KEY: z.string().default(''),
 

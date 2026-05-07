@@ -11,8 +11,12 @@ export type SearchOpts = {
   freshness?: 'Day' | 'Week' | 'Month'
 }
 
+// Gov-site scraper kinds (Plan-D Task 12, A2-γ). Concrete subclasses (Tasks 13-15)
+// pick one each: gd-province / gz-city / gd-public-security.
+export type GovScraperKind = 'gov-gd-province' | 'gov-gz-city' | 'gov-public-security' | 'gov-test'
+
 export interface SearchAdapter {
-  readonly kind: 'mock' | 'bing-news' | 'rss' | 'ddg' | 'aggregator'
+  readonly kind: 'mock' | 'bing-news' | 'rss' | 'ddg' | 'aggregator' | GovScraperKind
   // `key` mirrors `kind` and exists to satisfy the `ExternalAdapter` contract used by
   // the makePool template (au-T5). Kept distinct from `kind` so existing literal-union
   // type narrowing on `kind` keeps working for callers/tests.
