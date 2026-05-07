@@ -181,4 +181,58 @@ describe('tickAutoCancel', () => {
     expect(typeof result.scanned).toBe('number')
     expect(typeof result.cancelled).toBe('number')
   })
+
+  // Plan-D Task 20 — ISC-B1.3 e2e: Phase 1 (above threshold) + Phase 2 (drop below
+  // threshold + age out of lag window) → tick cancels + writes audit + (optionally)
+  // pushes inbox notification. Asserts the full chain in one shot.
+  test('e2e: confidence drops → tick cancels + audit + inbox notification', async () => {
+    const label = `ac-e2e-${Date.now()}`
+    const { predictionId, dispatchId } = await seedAutoCancelCase({
+      confidence: 0.5, belowSinceMinutesAgo: null, state: 'SENT', autoCancelDisabled: false,
+      label,
+    })
+
+    // Phase 1: confidence above threshold → no cancel
+    let r = await tickAutoCancel({ db: ctx.db, threshold: 0.3, lagMinutes: 15, notify: true })
+    expect(r.errors).toBe(0)
+    let task = await ctx.db.execute<{ state: string }>(sql`
+      SELECT state FROM dispatch_tasks WHERE id = ${dispatchId}::uuid
+    `)
+    expect((task as unknown as Array<{ state: string }>)[0]!.state).toBe('SENT')
+
+    // Phase 2: confidence drops to 0.2 (= 20 on 0..100 scale), below_since aged 20 min
+    await ctx.db.execute(sql`
+      UPDATE predictions
+      SET confidence_now = 20,
+          auto_cancel_below_since = NOW() - INTERVAL '20 minutes'
+      WHERE id = ${predictionId}::uuid
+    `)
+    r = await tickAutoCancel({ db: ctx.db, threshold: 0.3, lagMinutes: 15, notify: true })
+    expect(r.cancelled).toBeGreaterThanOrEqual(1)
+    expect(r.errors).toBe(0)
+
+    // Verify dispatch_task transitioned to CANCEL_PENDING
+    task = await ctx.db.execute<{ state: string }>(sql`
+      SELECT state FROM dispatch_tasks WHERE id = ${dispatchId}::uuid
+    `)
+    expect((task as unknown as Array<{ state: string }>)[0]!.state).toBe('CANCEL_PENDING')
+
+    // Verify audit log row was written for THIS dispatch (filter by target_id so
+    // parallel test fixtures don't leak in).
+    const audits = await ctx.db.execute<{ action: string; reason: string; after: unknown }>(sql`
+      SELECT action, reason, after FROM audit.operation_audit
+      WHERE target_kind = 'dispatch'
+        AND target_id = ${dispatchId}::uuid
+        AND action = 'AUTO_CANCEL_DISPATCH'
+    `)
+    const auditRows = audits as unknown as Array<{ action: string; reason: string; after: unknown }>
+    expect(auditRows.length).toBe(1)
+    expect(auditRows[0]!.reason).toMatch(/^\[AUTO\] confidence dropped to 0\.200/)
+    // structured detail lives in `after` (we deliberately skipped metadataJson — see src/audit/log.ts)
+    const after = auditRows[0]!.after as { predictionId: string; confidence: number; threshold: number; lagMinutes: number }
+    expect(after.predictionId).toBe(predictionId)
+    expect(after.confidence).toBeCloseTo(0.2, 5)
+    expect(after.threshold).toBe(0.3)
+    expect(after.lagMinutes).toBe(15)
+  })
 })
