@@ -35,6 +35,12 @@ const EnvSchema = z.object({
   SIMULATED_GZP_API_KEY: z.string().default('test-key'),
   SIMULATED_GZP_WEBHOOK_URL: z.string().url().default('http://localhost:3000/webhook/simulated-gzp'),
   SIMULATED_GZP_FAKE_MEDIA_BASE: z.string().url().default('http://localhost:3000/static/sim-media/'),
+
+  // --- 阿里云 OSS (m3, EX-6) ---
+  OSS_ENDPOINT: z.string().default('https://oss-cn-shenzhen.aliyuncs.com'),
+  OSS_ACCESS_KEY_ID: z.string().default(''),
+  OSS_ACCESS_KEY_SECRET: z.string().default(''),
+  OSS_BUCKET: z.string().default('cnp-media-dev'),
 })
 
 export type Env = z.infer<typeof EnvSchema>
