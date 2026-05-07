@@ -4,7 +4,7 @@ import { sql, eq, and, desc } from 'drizzle-orm'
 import { hashPassword } from '@/auth/password'
 import { roles, userRoles, users } from '@/db/schema/user'
 import { vehicleClasses, taskClasses } from '@/db/schema/taxonomy'
-import { predictions } from '@/db/schema/prediction'
+import { confidenceSnapshots, predictions } from '@/db/schema/prediction'
 import { dispatchTasks, mediaAssets } from '@/db/schema/dispatch'
 import { operationAudit } from '@/db/schema/audit'
 import { authRoutes } from '@/auth/routes'
@@ -103,6 +103,76 @@ describe('prediction routes', () => {
     const body = await res.json() as Array<{ status: string }>
     expect(Array.isArray(body)).toBe(true)
     expect(body.every((p) => p.status === 'PROPOSED')).toBe(true)
+  })
+
+  // Plan-C T33 / ISC-41: opt-in `?include=latest_snapshot` inlines the most
+  // recent confidence_snapshots row per prediction so DecisionView's
+  // InboxCard can render the reasoning snippet without a per-row fetch.
+  // Backward compat is non-negotiable — list calls without the flag must
+  // return the exact prior shape (no `latestSnapshot` field).
+  test('GET /predictions (default) does NOT include latestSnapshot field', async () => {
+    const res = await app.request('/predictions', { headers: { cookie: deciderCookie } })
+    expect(res.status).toBe(200)
+    const body = await res.json() as Array<Record<string, unknown>>
+    expect(Array.isArray(body)).toBe(true)
+    expect(body.length).toBeGreaterThan(0)
+    for (const item of body) {
+      expect('latestSnapshot' in item).toBe(false)
+    }
+  })
+
+  test('GET /predictions?include=latest_snapshot inlines latest snapshot per prediction', async () => {
+    // Seed a fresh prediction + 2 snapshots; the second is the latest.
+    const stamp = `latest-${Date.now()}`
+    const reg = (await ctx.db.execute<{ id: string; version: number }>(sql`
+      INSERT INTO regions (kind, name, version, geom)
+      VALUES ('AD_HOC', ${'latest-region-' + stamp}, 1, ST_GeomFromGeoJSON(${JSON.stringify(poly)}))
+      RETURNING id, version
+    `))[0]!
+    const [vc] = await ctx.db.insert(vehicleClasses).values({ name: `vc-latest-${stamp}`, level: 1 }).returning()
+    const [tc] = await ctx.db.insert(taskClasses).values({ name: `tc-latest-${stamp}`, level: 1 }).returning()
+    const [pred] = await ctx.db.insert(predictions).values({
+      sourceKind: 'WATCHLIST', sourceId: vc!.id,
+      regionId: reg.id, regionVersion: reg.version,
+      windowDate: new Date('2026-11-01'), windowHalf: 'AM',
+      vehicleClassId: vc!.id, taskClassId: tc!.id,
+      kDays: 7, expiresAt: new Date(Date.now() + 7 * 86400_000),
+    }).returning()
+
+    // Older snapshot first; newer snapshot wins.
+    await ctx.db.insert(confidenceSnapshots).values({
+      predictionId: pred!.id, kind: 'INCR', confidence: 40,
+      reasoning: 'older — should be dropped',
+      operator: 'PredictionAgent',
+      occurredAt: new Date(Date.now() - 60_000),
+    })
+    await ctx.db.insert(confidenceSnapshots).values({
+      predictionId: pred!.id, kind: 'FULL', confidence: 72,
+      reasoning: 'latest reasoning wins',
+      operator: 'PredictionAgent',
+      occurredAt: new Date(),
+    })
+
+    const res = await app.request('/predictions?include=latest_snapshot', {
+      headers: { cookie: deciderCookie },
+    })
+    expect(res.status).toBe(200)
+    const body = await res.json() as Array<{
+      id: string
+      latestSnapshot: { confidence: number; reasoning: string | null; kind: string; occurredAt: string } | null
+    }>
+    expect(Array.isArray(body)).toBe(true)
+    const ours = body.find((p) => p.id === pred!.id)
+    expect(ours).toBeDefined()
+    expect(ours!.latestSnapshot).not.toBeNull()
+    expect(ours!.latestSnapshot!.confidence).toBe(72)
+    expect(ours!.latestSnapshot!.reasoning).toBe('latest reasoning wins')
+    expect(ours!.latestSnapshot!.kind).toBe('FULL')
+
+    // Predictions without snapshots in the same response → latestSnapshot is null
+    // (NOT undefined / missing) so the frontend can rely on the field's presence.
+    const withoutSnaps = body.find((p) => p.id !== pred!.id && p.latestSnapshot === null)
+    expect(withoutSnaps).toBeDefined()
   })
 
   test('GET /predictions/:id returns detail + snapshots', async () => {

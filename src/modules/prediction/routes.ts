@@ -39,9 +39,16 @@ export function predictionRoutes(db: Db, deps: PredictionRouteDeps = {}) {
     const status = c.req.query('status')
     const limitParam = c.req.query('limit')
     const limit = limitParam ? Number.parseInt(limitParam, 10) : undefined
+    // Plan-C T33 / ISC-41: opt-in `?include=latest_snapshot` — default off
+    // so existing callers (and the prior 304-test contract) stay unchanged.
+    // Comma-separated tokens for forward-compat (future: ?include=foo,bar).
+    const includeRaw = c.req.query('include') ?? ''
+    const includeTokens = includeRaw.split(',').map((t) => t.trim()).filter(Boolean)
+    const includeLatestSnapshot = includeTokens.includes('latest_snapshot')
     return c.json(await listPredictions(db, {
       ...(status ? { status: status as any } : {}),
       ...(limit ? { limit } : {}),
+      ...(includeLatestSnapshot ? { includeLatestSnapshot: true } : {}),
     }))
   })
 

@@ -45,7 +45,19 @@ export function InboxCard({ item, onApprove, onReject, onDetail }: {
             <span className="inbox-card__field-val"><ConfBar value={item.confidence} /></span>
           </div>
         </div>
-        {item.reasoning && <div className="inbox-card__quote">{item.reasoning}</div>}
+        {item.reasoning && (
+          // Plan-C T33 / ISC-41: latest snapshot reasoning surfaced inline.
+          // Prefixed "推理:" so the role is immediately legible; italic small
+          // text keeps the card visually quiet next to the V·T·R + 置信度 row.
+          <div
+            className="inbox-card__quote"
+            style={{ fontStyle: 'italic', fontSize: 12 }}
+            title={item.reasoning}
+          >
+            <span style={{ fontStyle: 'normal', fontWeight: 600, marginRight: 4 }}>推理:</span>
+            {item.reasoning}
+          </div>
+        )}
       </div>
       <div className="inbox-card__actions">
         <Btn variant="ok" onClick={() => onApprove?.(item.id)}>批准</Btn>

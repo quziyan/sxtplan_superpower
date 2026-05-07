@@ -1,16 +1,31 @@
 import { useCallback, useEffect, useState } from 'react'
 import { InboxCard, PageHeader, type InboxItem } from '@/components'
-import { approvePrediction, listPredictions, rejectPrediction, type Prediction } from '@/lib/prediction-api'
+import { approvePrediction, listPredictions, rejectPrediction, type PredictionListItem } from '@/lib/prediction-api'
+
+// Plan-C T33 / ISC-41: trim a snapshot reasoning string for the InboxCard
+// preview. We want first paragraph or ~100 chars, whichever is shorter,
+// so each card stays single-line-ish on the inbox list.
+function previewReasoning(raw: string | null | undefined): string | undefined {
+  if (!raw) return undefined
+  const firstPara = raw.split(/\n{2,}|\r\n\r\n/)[0]?.trim() ?? ''
+  if (!firstPara) return undefined
+  const collapsed = firstPara.replace(/\s+/g, ' ')
+  return collapsed.length > 100 ? collapsed.slice(0, 100).trimEnd() + '…' : collapsed
+}
 
 export function DecisionView({ onOpenPrediction }: { onOpenPrediction?: (id: string) => void }) {
-  const [items, setItems] = useState<Prediction[]>([])
+  const [items, setItems] = useState<PredictionListItem[]>([])
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
 
   const refresh = useCallback(async () => {
     setLoading(true); setError(null)
-    try { setItems(await listPredictions({ status: 'PROPOSED', limit: 50 })) }
+    try {
+      // Plan-C T33: opt into inline latest snapshot so InboxCard can render
+      // the reasoning snippet without a per-row /predictions/:id fetch.
+      setItems(await listPredictions({ status: 'PROPOSED', limit: 50, includeLatestSnapshot: true }))
+    }
     catch (e) { setError((e as Error).message) }
     finally { setLoading(false) }
   }, [])
@@ -40,7 +55,7 @@ export function DecisionView({ onOpenPrediction }: { onOpenPrediction?: (id: str
     windowHalf: p.windowHalf,
     confidence: p.confidenceNow,
     status: p.status,
-    reasoning: undefined,  // m3 from latest snapshot
+    reasoning: previewReasoning(p.latestSnapshot?.reasoning),
   }))
 
   return (

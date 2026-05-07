@@ -31,6 +31,21 @@ export type Prediction = {
   updatedAt: string
 }
 
+// Plan-C T33 / ISC-41: when callers pass `includeLatestSnapshot: true`, the
+// backend inlines a summary of each prediction's most recent confidence
+// snapshot (or null when none exist). Lets DecisionView's InboxCard render
+// the reasoning snippet without a per-row /predictions/:id roundtrip.
+export type LatestSnapshotSummary = {
+  confidence: number
+  reasoning: string | null
+  occurredAt: string
+  kind: 'INCR' | 'FULL' | 'MANUAL'
+}
+
+export type PredictionListItem = Prediction & {
+  latestSnapshot?: LatestSnapshotSummary | null
+}
+
 export type ConfidenceSnapshot = {
   id: string
   predictionId: string
@@ -44,12 +59,18 @@ export type ConfidenceSnapshot = {
   occurredAt: string
 }
 
-export async function listPredictions(opts: { status?: PredictionStatus; limit?: number } = {}): Promise<Prediction[]> {
+export async function listPredictions(
+  opts: { status?: PredictionStatus; limit?: number; includeLatestSnapshot?: boolean } = {},
+): Promise<PredictionListItem[]> {
   const params = new URLSearchParams()
   if (opts.status) params.set('status', opts.status)
   if (opts.limit !== undefined) params.set('limit', String(opts.limit))
+  // Plan-C T33 / ISC-41: comma-separated `include` token list. Today only
+  // `latest_snapshot` is supported; future flags can be appended without
+  // breaking the contract.
+  if (opts.includeLatestSnapshot) params.set('include', 'latest_snapshot')
   const qs = params.toString()
-  return api<Prediction[]>(`/predictions${qs ? `?${qs}` : ''}`)
+  return api<PredictionListItem[]>(`/predictions${qs ? `?${qs}` : ''}`)
 }
 
 export type PredictionDetailResponse = {
