@@ -37,7 +37,7 @@ describe('enqueueDispatch + requestCancel (mock adapter)', () => {
   test('enqueue creates QUEUED → SENT with externalId', async () => {
     const { db } = ctx
     const p = await setup(db, `disp-q-${Date.now()}`)
-    const task = await enqueueDispatch(db, { predictionId: p.id })
+    const task = await enqueueDispatch(db, { predictionId: p.id, adapterKey: 'mock' })
     expect(task.state).toBe('SENT')
     expect(task.adapterKey).toBe('mock')
     expect(task.externalId).toMatch(/^mock-/)

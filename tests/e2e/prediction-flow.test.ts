@@ -129,7 +129,7 @@ describe('m2 prediction flow E2E', () => {
     expect(approved.prediction.status).toBe('APPROVED')
 
     // 6. Direct dispatch (m2: not routed; m3 BullMQ worker)
-    const dispatch = await enqueueDispatch(ctx.db, { predictionId })
+    const dispatch = await enqueueDispatch(ctx.db, { predictionId, adapterKey: 'mock' })
     expect(dispatch.state).toBe('SENT')
     expect(dispatch.adapterKey).toBe('mock')
     expect(dispatch.externalId).toMatch(/^mock-/)

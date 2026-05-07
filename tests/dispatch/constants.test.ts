@@ -45,4 +45,11 @@ describe('getDefaultAdapterKey', () => {
     resetEnvCacheForTests()
     expect(getDefaultAdapterKey()).toBe('mock')
   })
+
+  test('CAMERA_BACKEND_KIND=mock wins over SIMULATED_GZP_ENABLED=true', () => {
+    process.env.CAMERA_BACKEND_KIND = 'mock'
+    process.env.SIMULATED_GZP_ENABLED = 'true'
+    resetEnvCacheForTests()
+    expect(getDefaultAdapterKey()).toBe('mock')
+  })
 })
