@@ -7,7 +7,8 @@ import { authRequired, roleRequired, type AuthContext } from '@/auth/middleware'
 import { logAudit } from '@/audit/log'
 import { BadRequest, NotFound } from '@/lib/errors'
 import { triggerDispatchAfterApproval } from '@/scheduler/triggers/post-approval'
-import { fullRecalcQueue, refreshQueue } from '@/scheduler/queue'
+import { fullRecalcQueue, newsTriageQueue, refreshQueue } from '@/scheduler/queue'
+import { tickNewsIngest } from '@/scheduler/workers/news-ingest'
 import { dispatchTasks, mediaAssets, type DispatchTask, type MediaAsset } from '@/db/schema/dispatch'
 import { requestCancel } from '@/dispatch/service'
 import { writeConfidenceSnapshot } from './confidence'
@@ -273,11 +274,41 @@ export function predictionRoutes(db: Db, deps: PredictionRouteDeps = {}) {
         return c.json({ ok: true, mode: 'INCR' as const, message: 'enqueued INCR refresh' })
       }
 
-      // Default: FULL P5 manual trigger.
+      // m5 UI 改进:Default 模式不只 FULL 重评估,**同时拉新闻**(用户预期"重算"=
+      // fetch fresh news + reason)。如果 prediction 关联了 watchlist,scoped 跑一次
+      // tickNewsIngest 抓最新新闻 → matcher → 入 triageQueue(异步 LLM 评分,HIGH 自动
+      // 触发 INCR refresh)。同时仍然 enqueue fullRecalc → P5 → refresh.FULL 让 LLM
+      // 在最新证据池上重做 FULL 评估。
+      let ingestSummary: { fetched: number; inserted: number; triaged: number } | null = null
+      if (pred.sourceKind === 'WATCHLIST' && pred.sourceId) {
+        try {
+          const r = await tickNewsIngest({
+            db,
+            triageQueue: newsTriageQueue,
+            onlyWatchlistId: pred.sourceId,
+          })
+          ingestSummary = {
+            fetched: r.newsFetched,
+            inserted: r.newsInserted,
+            triaged: r.triageJobsEnqueued,
+          }
+        } catch (e) {
+          console.warn(`[recompute-now] inline newsIngest failed for pred=${id}: ${(e as Error).message}`)
+        }
+      }
       await fullRecalcQueue.add('full-recalc', { predictionId: id, manualTrigger: true })
-      recomputeEntry.reason = 'FULL P5 manual trigger'
+      recomputeEntry.reason = ingestSummary
+        ? `FULL P5 manual + scoped newsIngest (fetched=${ingestSummary.fetched}, inserted=${ingestSummary.inserted}, triaged=${ingestSummary.triaged})`
+        : 'FULL P5 manual trigger'
       await logAudit(db, recomputeEntry)
-      return c.json({ ok: true, mode: 'FULL' as const, message: 'enqueued full-recalc' })
+      return c.json({
+        ok: true,
+        mode: 'FULL' as const,
+        message: ingestSummary
+          ? `enqueued full-recalc + 拉了 ${ingestSummary.fetched} 条新闻(${ingestSummary.inserted} 新),${ingestSummary.triaged} 个 triage 异步评分`
+          : 'enqueued full-recalc',
+        ingestSummary,
+      })
     },
   )
 

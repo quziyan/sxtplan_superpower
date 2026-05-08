@@ -44,6 +44,11 @@ export type NewsIngestDeps = {
   triageQueue: NewsTriageQueueLike
   /** Override the SearchAdapter (e.g. tests). Defaults to env-selected adapter. */
   searchAdapter?: NewsIngestSearchAdapterLike
+  /**
+   * m5 UI 改进:scope to a single watchlist(用于 recompute-now 路由触发某 prediction
+   * 关联 watchlist 的即时新闻拉取)。default 不传 = 扫所有 active watchlist(原 tick 行为)。
+   */
+  onlyWatchlistId?: string
 }
 
 export type NewsIngestTickResult = {
@@ -68,10 +73,15 @@ export async function tickNewsIngest(
   const adapter: NewsIngestSearchAdapterLike =
     deps.searchAdapter ?? getSearchAdapter()
 
-  const activeWls = await deps.db
-    .select()
-    .from(watchLists)
-    .where(eq(watchLists.isActive, true))
+  const activeWls = deps.onlyWatchlistId
+    ? await deps.db
+        .select()
+        .from(watchLists)
+        .where(eq(watchLists.id, deps.onlyWatchlistId))
+    : await deps.db
+        .select()
+        .from(watchLists)
+        .where(eq(watchLists.isActive, true))
 
   for (const wl of activeWls) {
     result.watchlistsScanned++
