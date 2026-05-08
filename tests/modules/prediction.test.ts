@@ -313,12 +313,13 @@ describe('prediction routes', () => {
   test('POST /predictions/:id/recompute-now as ANALYST returns ok + audit', async () => {
     const res = await app.request(`/predictions/${predictionId}/recompute-now`, {
       method: 'POST',
-      headers: { cookie: analystCookie },
+      headers: { 'Content-Type': 'application/json', cookie: analystCookie },
+      body: JSON.stringify({}),
     })
     expect(res.status).toBe(200)
-    const body = await res.json() as { ok: boolean; message: string }
+    const body = await res.json() as { ok: boolean; mode: string; message: string }
     expect(body.ok).toBe(true)
-    expect(body.message).toContain('stub')
+    expect(body.mode).toBe('FULL')
   })
 
   test('POST /predictions/:id/approve requires DECIDER role', async () => {

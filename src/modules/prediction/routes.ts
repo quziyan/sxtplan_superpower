@@ -7,6 +7,7 @@ import { authRequired, roleRequired, type AuthContext } from '@/auth/middleware'
 import { logAudit } from '@/audit/log'
 import { BadRequest, NotFound } from '@/lib/errors'
 import { triggerDispatchAfterApproval } from '@/scheduler/triggers/post-approval'
+import { fullRecalcQueue, refreshQueue } from '@/scheduler/queue'
 import { dispatchTasks, mediaAssets, type DispatchTask, type MediaAsset } from '@/db/schema/dispatch'
 import { requestCancel } from '@/dispatch/service'
 import { writeConfidenceSnapshot } from './confidence'
@@ -219,22 +220,63 @@ export function predictionRoutes(db: Db, deps: PredictionRouteDeps = {}) {
     },
   )
 
-  // recompute-now — m2: enqueue full-recalc job (queue is stub) + audit log
-  app.post('/:id/recompute-now', authRequired(db), roleRequired('ANALYST'), async (c) => {
-    const auth = c.get('auth')
-    const id = c.req.param('id')
-    const pred = await getPrediction(db, id)
-    if (!pred) throw NotFound(`prediction ${id} not found`)
-    // m2: BullMQ queue exists but no worker. Just log intent.
-    console.log(`[prediction] recompute-now requested for ${id} (workers stubbed in m2)`)
-    const recomputeEntry: import('@/audit/log').AuditEntry = {
-      actorUserId: auth.user.id,
-      targetKind: 'prediction', targetId: id, action: 'recompute_now_requested',
-    }
-    if (auth.activeRoleKey !== null) recomputeEntry.actorRoleKey = auth.activeRoleKey
-    await logAudit(db, recomputeEntry)
-    return c.json({ ok: true, message: 'recompute requested (m2 stub: queued only, worker pending)' })
-  })
+  // recompute-now — Plan-E G5 / m5: dual-mode (FULL P5 manual / optional INCR).
+  //
+  // Default body (or no body) → enqueues a full-recalc job with
+  // `manualTrigger=true`, which short-circuits the priority gate to P5
+  // inside `processFullRecalcJob` → `shouldTriggerFull`.
+  //
+  // `{kind:"INCR", newEvidenceNewsIds:[...]}` → enqueues a refresh job on
+  // the INCR path with the supplied evidence ids. INCR without
+  // `newEvidenceNewsIds` is rejected as 400 (the worker has no new
+  // evidence to fold in).
+  const recomputeNowSchema = z.object({
+    kind: z.enum(['FULL', 'INCR']).optional(),
+    newEvidenceNewsIds: z.array(z.string().uuid()).optional(),
+  }).optional()
+
+  app.post(
+    '/:id/recompute-now',
+    authRequired(db),
+    roleRequired('ANALYST'),
+    zValidator('json', recomputeNowSchema),
+    async (c) => {
+      const auth = c.get('auth')
+      const id = c.req.param('id')
+      const pred = await getPrediction(db, id)
+      if (!pred) throw NotFound(`prediction ${id} not found`)
+      const body = c.req.valid('json')
+
+      const recomputeEntry: import('@/audit/log').AuditEntry = {
+        actorUserId: auth.user.id,
+        targetKind: 'prediction', targetId: id, action: 'recompute_now_requested',
+      }
+      if (auth.activeRoleKey !== null) recomputeEntry.actorRoleKey = auth.activeRoleKey
+
+      if (body?.kind === 'INCR') {
+        if (!body.newEvidenceNewsIds || body.newEvidenceNewsIds.length === 0) {
+          return c.json(
+            { error: { code: 'BAD_REQUEST', message: 'newEvidenceNewsIds required for INCR mode' } },
+            400,
+          )
+        }
+        await refreshQueue.add('incr', {
+          predictionId: id,
+          kind: 'INCR',
+          newEvidenceNewsIds: body.newEvidenceNewsIds,
+        })
+        recomputeEntry.reason = `INCR with ${body.newEvidenceNewsIds.length} news ids`
+        await logAudit(db, recomputeEntry)
+        return c.json({ ok: true, mode: 'INCR' as const, message: 'enqueued INCR refresh' })
+      }
+
+      // Default: FULL P5 manual trigger.
+      await fullRecalcQueue.add('full-recalc', { predictionId: id, manualTrigger: true })
+      recomputeEntry.reason = 'FULL P5 manual trigger'
+      await logAudit(db, recomputeEntry)
+      return c.json({ ok: true, mode: 'FULL' as const, message: 'enqueued full-recalc' })
+    },
+  )
 
   return app
 }

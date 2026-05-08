@@ -6,8 +6,12 @@ const env = loadEnv()
 // BullMQ accepts a redis url string OR an ioredis instance
 const connection = { url: env.REDIS_URL }
 
-export const refreshQueue = new Queue<{ predictionId: string; kind: 'INCR' | 'FULL' }>('refresh', { connection })
-export const fullRecalcQueue = new Queue<{ predictionId: string }>('full-recalc', { connection })
+export const refreshQueue = new Queue<{
+  predictionId: string
+  kind: 'INCR' | 'FULL'
+  newEvidenceNewsIds?: string[]
+}>('refresh', { connection })
+export const fullRecalcQueue = new Queue<{ predictionId: string; manualTrigger?: boolean }>('full-recalc', { connection })
 export const newsIngestQueue = new Queue<{ keywords: string[] }>('news-ingest', { connection })
 /**
  * News-triage queue (Plan-E Task 9, m5). Producer: `tickNewsIngest` enqueues
