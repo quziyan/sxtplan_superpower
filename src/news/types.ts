@@ -16,7 +16,7 @@ export type SearchOpts = {
 export type GovScraperKind = 'gov-gd-province' | 'gov-gz-city' | 'gov-public-security' | 'gov-test'
 
 export interface SearchAdapter {
-  readonly kind: 'mock' | 'bing-news' | 'rss' | 'ddg' | 'aggregator' | GovScraperKind
+  readonly kind: 'mock' | 'bing-news' | 'tavily' | 'rss' | 'ddg' | 'aggregator' | GovScraperKind
   // `key` mirrors `kind` and exists to satisfy the `ExternalAdapter` contract used by
   // the makePool template (au-T5). Kept distinct from `kind` so existing literal-union
   // type narrowing on `kind` keeps working for callers/tests.
