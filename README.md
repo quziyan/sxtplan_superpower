@@ -317,3 +317,47 @@ m4 引入的 env 字段(全部已加默认值,可在 `.env.example` 找到完整
 - ✅ GET /retrospectives/aggregate 端点(C-5,MatrixTab server-side)
 
 m5 followup 见 m4 spec § 3 Out of Scope。
+
+## m5 — News Intake Pipeline + Tavily Migration
+
+> 详细计划见 `docs/superpowers/plans/2026-05-08-m5-news-intake.md`
+
+### 核心成果
+
+修复 m3 audit 暴露的 5 处断链(cadence INCR错kind / newsIngest 无 worker / triage 孤儿 / matcher 未接线 / recompute-now stub),让推理证据持续收集端到端在生产自动运行。Tavily 替代 Bing 成默认搜索源。
+
+### 新增 env 变量
+
+| 变量 | 默认值 | 用途 |
+|------|--------|------|
+| `TAVILY_API_KEY` | `(empty)` | Tavily REST API key;空 = degraded fallback |
+| `SEARCH_API_KIND` | `tavily`(改) | 默认搜索源切到 Tavily;`bing-news` 等其他保留作 fallback |
+| `NEWS_INGEST_INTERVAL_MIN` | `15` | newsIngest tick 间隔(分钟) |
+| `NEWS_TRIAGE_CONCURRENCY` | `3` | newsTriageWorker 并发度 |
+
+### 新数据流(post m5)
+
+```
+newsIngestTick (15min)
+  → for each active watchlist:
+      keywords = wl.keywords ?? derive(V/T/region)
+      adapter.query(keywords)
+      INSERT news_items (URL UNIQUE)
+      candidates = findMatchingPredictions(news_id)  ← 同步 SQL
+      for each pred: newsTriageQueue.add({pred, news})  → 异步
+
+newsTriageWorker (concurrency=3)
+  → runNewsTriageAgent (REAL LLM)
+  → if relevant && weight>=MED: INSERT news_evidence(weight, cited)
+  → if weight==HIGH: refreshQueue.add(INCR)
+
+refreshWorker (existing)
+  → runPredictionAgent
+  → confidence_snapshots + predictions.confidence_now
+```
+
+FULL 路径独立:cadenceTick(60s)→ fullRecalcQueue → P1-P5 trigger → refreshQueue.FULL。
+
+### 启动后行为
+
+新闻情报闭环可在生产持续自动运行:每 15 分钟主动从 Tavily / RSS / 政务网拉新闻 → matcher 找候选 → LLM triage 评分 → HIGH 写 evidence + 触发 INCR → PredictionAgent 更新 confidence_now,prediction 详情页持续可见。
