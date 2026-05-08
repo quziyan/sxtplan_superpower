@@ -9,6 +9,13 @@ const connection = { url: env.REDIS_URL }
 export const refreshQueue = new Queue<{ predictionId: string; kind: 'INCR' | 'FULL' }>('refresh', { connection })
 export const fullRecalcQueue = new Queue<{ predictionId: string }>('full-recalc', { connection })
 export const newsIngestQueue = new Queue<{ keywords: string[] }>('news-ingest', { connection })
+/**
+ * News-triage queue (Plan-E Task 9, m5). Producer: `tickNewsIngest` enqueues
+ * one job per (prediction × news) candidate surfaced by the matcher.
+ * Consumer: `createNewsTriageWorker` invokes `runNewsTriageAgent` and, on
+ * HIGH-weight evidence, enqueues a refresh-INCR job.
+ */
+export const newsTriageQueue = new Queue<{ predictionId: string; newsId: string }>('news-triage', { connection })
 export const dispatchQueue = new Queue<{ predictionId: string; adapterKey: string }>('dispatch', { connection })
 
 /**
@@ -45,6 +52,7 @@ export async function closeAllQueues() {
     refreshQueue.close(),
     fullRecalcQueue.close(),
     newsIngestQueue.close(),
+    newsTriageQueue.close(),
     dispatchQueue.close(),
     mediaFetchQueue.close(),
     retrospectiveQueue.close(),

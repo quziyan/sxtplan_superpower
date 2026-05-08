@@ -18,6 +18,8 @@ import { scheduleCadenceTick } from './workers/cadence'
 import { createDispatchWorker } from './workers/dispatch'
 import { createFullRecalcWorker } from './workers/full-recalc'
 import { createMediaFetchWorker } from './workers/media-fetch'
+import { scheduleNewsIngestTick } from './workers/news-ingest'
+import { createNewsTriageWorker } from './workers/news-triage'
 import { createRefreshWorker } from './workers/refresh'
 import { createRetrospectiveWorker, scheduleRetrospectiveTick } from './workers/retrospective'
 
@@ -35,13 +37,17 @@ export async function startWorkers(): Promise<void> {
   console.log('[scheduler] media-fetch worker registered')
   workers.push(createRetrospectiveWorker())
   console.log('[scheduler] retrospective worker registered')
+  workers.push(createNewsTriageWorker())
+  console.log('[scheduler] news-triage worker registered')
   intervals.push(scheduleCadenceTick())
   console.log('[scheduler] cadence tick scheduled (60s)')
   intervals.push(scheduleRetrospectiveTick())
   console.log('[scheduler] retrospective tick scheduled (5m)')
   intervals.push(scheduleAutoCancelTick())
   console.log('[scheduler] auto-cancel tick scheduled (5m)')
-  console.log('[scheduler] queues defined: refresh, full-recalc, news-ingest, dispatch, media-fetch, retrospective')
+  intervals.push(scheduleNewsIngestTick())
+  console.log('[scheduler] news-ingest tick scheduled (15m default)')
+  console.log('[scheduler] queues defined: refresh, full-recalc, news-ingest, news-triage, dispatch, media-fetch, retrospective')
 }
 
 export async function stopWorkers(): Promise<void> {

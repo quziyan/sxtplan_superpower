@@ -66,6 +66,11 @@ const EnvSchema = z.object({
   // bills predictable while still ahead of the typical INCR-fanout depth.
   NEWS_TRIAGE_CONCURRENCY: z.coerce.number().min(1).max(10).default(3),
 
+  // --- News-ingest tick cadence (Plan-E Task 9, ISC-Anti.2) ---
+  // Minutes between newsIngest tick fires. Default 15m balances news lag
+  // against per-key search-API rate budgets. Lower bound 1m / upper 120m.
+  NEWS_INGEST_INTERVAL_MIN: z.coerce.number().min(1).max(120).default(15),
+
   // --- 阿里云 OSS (m3, EX-6) ---
   OSS_ADAPTER_KEY: z.enum(['mock', 'aliyun']).default('mock'),
   OSS_ENDPOINT: z.string().default('https://oss-cn-shenzhen.aliyuncs.com'),

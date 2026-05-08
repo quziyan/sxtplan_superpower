@@ -3,6 +3,7 @@ import { createDb, type Db } from '@/db/client'
 import { newsItems } from '@/db/schema/prediction'
 import { watchLists } from '@/db/schema/watchlist'
 import { vehicleClasses, taskClasses } from '@/db/schema/taxonomy'
+import { loadEnv } from '@/env'
 import { findMatchingPredictions } from '@/news/matcher'
 import { resolveKeywords } from '@/news/keyword-derive'
 import { ingestHit } from '@/news/normalizer'
@@ -155,19 +156,21 @@ export function defaultNewsIngestDeps(): NewsIngestDeps {
 }
 
 /**
- * Schedule the newsIngest tick. Default cadence: 5 minutes — long enough to
- * stay well under any per-key search-API rate budget, short enough to keep
- * news lag bounded. Override `intervalMs` for tests / ops experiments.
+ * Schedule the newsIngest tick. Default cadence reads
+ * `env.NEWS_INGEST_INTERVAL_MIN` (default 15 minutes — long enough to stay
+ * under per-key search-API rate budgets, short enough to keep news lag
+ * bounded). Override `intervalMs` for tests / ops experiments.
  */
 export function scheduleNewsIngestTick(
   deps: NewsIngestDeps = defaultNewsIngestDeps(),
-  intervalMs = 5 * 60_000,
+  intervalMs?: number,
 ): ReturnType<typeof setInterval> {
+  const ms = intervalMs ?? loadEnv().NEWS_INGEST_INTERVAL_MIN * 60_000
   const t = setInterval(() => {
     tickNewsIngest(deps).catch((err) => {
       console.error('[news-ingest-tick] failed:', err)
     })
-  }, intervalMs)
+  }, ms)
   ;(t as unknown as { unref?: () => void }).unref?.()
   return t
 }
