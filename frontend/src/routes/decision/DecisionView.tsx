@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useState } from 'react'
 import { InboxCard, PageHeader, type InboxItem } from '@/components'
 import { approvePrediction, listPredictions, rejectPrediction, type PredictionListItem } from '@/lib/prediction-api'
+import { listVehicleClasses, listTaskClasses, type VehicleClass, type TaskClass } from '@/lib/taxonomy-api'
+import { listRegions, type RegionListItem } from '@/lib/region-api'
 
 // Plan-C T33 / ISC-41: trim a snapshot reasoning string for the InboxCard
 // preview. We want first paragraph or ~100 chars, whichever is shorter,
@@ -15,9 +17,22 @@ function previewReasoning(raw: string | null | undefined): string | undefined {
 
 export function DecisionView({ onOpenPrediction }: { onOpenPrediction?: (id: string) => void }) {
   const [items, setItems] = useState<PredictionListItem[]>([])
+  const [vMap, setVMap] = useState<Map<string, VehicleClass>>(new Map())
+  const [tMap, setTMap] = useState<Map<string, TaskClass>>(new Map())
+  const [regionMap, setRegionMap] = useState<Map<string, RegionListItem>>(new Map())
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    Promise.all([listVehicleClasses(), listTaskClasses(), listRegions({ kind: 'ALL' })])
+      .then(([vs, ts, rs]) => {
+        setVMap(new Map(vs.map(v => [v.id, v])))
+        setTMap(new Map(ts.map(t => [t.id, t])))
+        setRegionMap(new Map(rs.map(r => [r.id, r])))
+      })
+      .catch(console.error)
+  }, [])
 
   const refresh = useCallback(async () => {
     setLoading(true); setError(null)
@@ -48,9 +63,9 @@ export function DecisionView({ onOpenPrediction }: { onOpenPrediction?: (id: str
   const inboxItems: InboxItem[] = items.map(p => ({
     id: p.id,
     shortId: p.id.split('-').slice(-1)[0]?.slice(0, 6) ?? p.id.slice(0, 8),
-    vehicleLabel: p.vehicleClassId.slice(0, 6),
-    taskLabel: p.taskClassId.slice(0, 6),
-    regionLabel: p.regionId.slice(-6),
+    vehicleLabel: vMap.get(p.vehicleClassId)?.name ?? p.vehicleClassId.slice(0, 6),
+    taskLabel: tMap.get(p.taskClassId)?.name ?? p.taskClassId.slice(0, 6),
+    regionLabel: regionMap.get(p.regionId)?.name ?? p.regionId.slice(-6),
     windowDate: p.windowDate.slice(0, 10),
     windowHalf: p.windowHalf,
     confidence: p.confidenceNow,

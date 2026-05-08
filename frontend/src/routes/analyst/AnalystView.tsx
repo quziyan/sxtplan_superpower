@@ -3,6 +3,8 @@ import { Btn, Icon, KpiRow, PageHeader, PredictionTable } from '@/components'
 import { listPredictions, type Prediction } from '@/lib/prediction-api'
 import { listWatchLists, type WatchList } from '@/lib/watchlist-api'
 import { listTaskCards, type TaskCard } from '@/lib/taskcard-api'
+import { listVehicleClasses, listTaskClasses, type VehicleClass, type TaskClass } from '@/lib/taxonomy-api'
+import { listRegions, type RegionListItem } from '@/lib/region-api'
 import { NewWatchListModal } from './NewWatchListModal'
 import { NewTaskCardModal } from './NewTaskCardModal'
 
@@ -10,6 +12,9 @@ export function AnalystView({ onOpenPrediction }: { onOpenPrediction?: (id: stri
   const [watchlists, setWatchlists] = useState<WatchList[]>([])
   const [taskcards, setTaskcards] = useState<TaskCard[]>([])
   const [predictions, setPredictions] = useState<Prediction[]>([])
+  const [vMap, setVMap] = useState<Map<string, VehicleClass>>(new Map())
+  const [tMap, setTMap] = useState<Map<string, TaskClass>>(new Map())
+  const [regionMap, setRegionMap] = useState<Map<string, RegionListItem>>(new Map())
   const [loading, setLoading] = useState(true)
   const [activeWatchlist, setActiveWatchlist] = useState<string>('all')
   const [newModalOpen, setNewModalOpen] = useState(false)
@@ -35,6 +40,16 @@ export function AnalystView({ onOpenPrediction }: { onOpenPrediction?: (id: stri
       .finally(() => setLoading(false))
   }, [])
 
+  useEffect(() => {
+    Promise.all([listVehicleClasses(), listTaskClasses(), listRegions({ kind: 'ALL' })])
+      .then(([vs, ts, rs]) => {
+        setVMap(new Map(vs.map(v => [v.id, v])))
+        setTMap(new Map(ts.map(t => [t.id, t])))
+        setRegionMap(new Map(rs.map(r => [r.id, r])))
+      })
+      .catch(console.error)
+  }, [])
+
   const filtered = activeWatchlist === 'all'
     ? predictions
     : predictions.filter(p => p.sourceKind === 'WATCHLIST' && p.sourceId === activeWatchlist)
@@ -48,9 +63,9 @@ export function AnalystView({ onOpenPrediction }: { onOpenPrediction?: (id: stri
 
   const tableRows = filtered.map(p => ({
     id: p.id,
-    vehicleClassName: p.vehicleClassId.slice(0, 6),
-    taskClassName: p.taskClassId.slice(0, 6),
-    regionShortId: p.regionId.slice(-6),
+    vehicleClassName: vMap.get(p.vehicleClassId)?.name ?? p.vehicleClassId.slice(0, 6),
+    taskClassName: tMap.get(p.taskClassId)?.name ?? p.taskClassId.slice(0, 6),
+    regionShortId: regionMap.get(p.regionId)?.name ?? p.regionId.slice(-6),
     windowDate: p.windowDate.slice(0, 10),
     windowHalf: p.windowHalf,
     kDays: p.kDays,
