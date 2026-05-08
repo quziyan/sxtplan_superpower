@@ -109,6 +109,39 @@ export type NewsEvidenceWithItem = {
   }
 }
 
+export type NewsItemSummary = {
+  id: string
+  title: string
+  url: string
+  sourceLabel: string
+  sourceKind: string
+  summaryZh: string | null
+  rawSnippet: string | null
+  publishedAt: Date | null
+}
+
+export async function getNewsByIds(db: Db, ids: string[]): Promise<Record<string, NewsItemSummary>> {
+  if (ids.length === 0) return {}
+  const rows = await db.execute<{
+    id: string; title: string; url: string; source_label: string; source_kind: string
+    summary_zh: string | null; raw_snippet: string | null; published_at: Date | null
+  }>(sql`
+    SELECT id, title, url, source_label, source_kind::text AS source_kind,
+           summary_zh, raw_snippet, published_at
+    FROM news_items
+    WHERE id = ANY(${ids}::uuid[])
+  `)
+  const out: Record<string, NewsItemSummary> = {}
+  for (const r of rows as any[]) {
+    out[r.id] = {
+      id: r.id, title: r.title, url: r.url,
+      sourceLabel: r.source_label, sourceKind: r.source_kind,
+      summaryZh: r.summary_zh, rawSnippet: r.raw_snippet, publishedAt: r.published_at,
+    }
+  }
+  return out
+}
+
 export async function getNewsEvidence(db: Db, predictionId: string): Promise<NewsEvidenceWithItem[]> {
   const rows = await db.execute<{
     evidence_id: string; weight: 'HIGH' | 'MED' | 'LOW'; cited: boolean; added_at: Date

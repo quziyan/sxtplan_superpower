@@ -164,7 +164,11 @@ export function PredictionDetail({
           <div className="section-h__title">推理与证据</div>
           <div className="section-h__sub">m2 简化:展示快照 reasoning;真证据列表 m3 接</div>
         </div>
-        <EvidenceList snapshots={data.snapshots} evidence={data.evidence ?? []} />
+        <EvidenceList
+          snapshots={data.snapshots}
+          evidence={data.evidence ?? []}
+          newsById={data.newsById ?? {}}
+        />
       </section>
       <section>
         <div className="section-h">

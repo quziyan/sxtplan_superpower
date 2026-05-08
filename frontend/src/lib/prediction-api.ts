@@ -91,11 +91,24 @@ export type NewsEvidenceWithItem = {
   }
 }
 
+// m5 UI v2: 后端把 snapshots 引用的全部新闻打 lookup map,前端按 snapshot 分组着色
+export type NewsItemSummary = {
+  id: string
+  title: string
+  url: string
+  sourceLabel: string
+  sourceKind: string
+  summaryZh: string | null
+  rawSnippet: string | null
+  publishedAt: string | null
+}
+
 export type PredictionDetailResponse = {
   prediction: Prediction
   snapshots: ConfidenceSnapshot[]
   dispatchTasks: DispatchTaskWithMedia[]
   evidence: NewsEvidenceWithItem[]
+  newsById: Record<string, NewsItemSummary>
 }
 
 export async function getPredictionDetail(id: string): Promise<PredictionDetailResponse> {

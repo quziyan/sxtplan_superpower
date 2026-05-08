@@ -12,7 +12,7 @@ import { tickNewsIngest } from '@/scheduler/workers/news-ingest'
 import { dispatchTasks, mediaAssets, type DispatchTask, type MediaAsset } from '@/db/schema/dispatch'
 import { requestCancel } from '@/dispatch/service'
 import { writeConfidenceSnapshot } from './confidence'
-import { getPrediction, getSnapshots, getNewsEvidence, listPredictions, transitionStatus } from './service'
+import { getPrediction, getSnapshots, getNewsEvidence, getNewsByIds, listPredictions, transitionStatus } from './service'
 
 const manualConfSchema = z.object({
   confidence: z.number().int().min(0).max(100),
@@ -60,6 +60,14 @@ export function predictionRoutes(db: Db, deps: PredictionRouteDeps = {}) {
     const snaps = await getSnapshots(db, pred.id)
     // m5 UI 改进:inline news_evidence 关联的新闻原文(标题+摘要+URL)
     const evidence = await getNewsEvidence(db, pred.id)
+    // m5 UI v2: 还把 snapshots 里 evidenceIds 引用的新闻打成 lookup map,前端按
+    // snapshot 分组展示证据链接 + 着色(新引用 vs 复用)。
+    const allEvidenceIds = new Set<string>()
+    for (const s of snaps) {
+      const ids = (s.evidenceIds as string[] | null) ?? []
+      for (const id of ids) allEvidenceIds.add(id)
+    }
+    const newsById = await getNewsByIds(db, Array.from(allEvidenceIds))
 
     // Plan-C T27 / ISC-35: inline dispatchTasks (with nested mediaAssets)
     // alongside the prediction detail. One round trip from the UI for the
@@ -94,6 +102,7 @@ export function predictionRoutes(db: Db, deps: PredictionRouteDeps = {}) {
       snapshots: snaps,
       dispatchTasks: dispatchTasksOut,
       evidence,
+      newsById,
     })
   })
 
