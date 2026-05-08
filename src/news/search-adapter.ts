@@ -5,6 +5,7 @@ import { NotImplementedError } from './types'
 import { GovGdProvinceAdapter } from './adapters/gov-gd-province'
 import { GovGzCityAdapter } from './adapters/gov-gz-city'
 import { GovPublicSecurityAdapter } from './adapters/gov-public-security'
+import { TavilySearchAdapter } from './adapters/tavily'
 
 class MockSearchAdapter implements SearchAdapter {
   readonly kind = 'mock' as const
@@ -203,6 +204,7 @@ const SEARCH_FACTORIES: Record<string, () => SearchAdapter> = {
   rss:                () => new RssSearchAdapter(),
   ddg:                () => new DdgSearchAdapter(),
   aggregator:         () => new AggregatorSearchAdapter(),
+  tavily:             () => new TavilySearchAdapter(),
   // Gov-site scrapers (Plan-D Tasks 13-15, A2-γ). Opt-in via GOV_SCRAPER_ENABLED.
   // Listed in factories so tests / direct lookups can resolve them; only added
   // to `alsoRegister` (below) when env flag is `'true'`.

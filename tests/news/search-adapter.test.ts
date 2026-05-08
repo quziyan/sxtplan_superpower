@@ -103,6 +103,22 @@ describe('SearchAdapter', () => {
     }
   })
 
+  test('default SEARCH_API_KIND=tavily resolves TavilySearchAdapter', () => {
+    const oldKind = process.env.SEARCH_API_KIND
+    delete process.env.SEARCH_API_KIND
+    resetEnvCacheForTests()
+    resetSearchAdapterPoolForTests()
+    try {
+      const adapter = getSearchAdapter()
+      expect(adapter.kind).toBe('tavily')
+      expect(adapter.key).toBe('tavily')
+    } finally {
+      if (oldKind !== undefined) process.env.SEARCH_API_KIND = oldKind
+      resetEnvCacheForTests()
+      resetSearchAdapterPoolForTests()
+    }
+  })
+
   test('RssSearchAdapter survives one feed failure and returns from others', async () => {
     let callCount = 0
     const originalFetch = globalThis.fetch

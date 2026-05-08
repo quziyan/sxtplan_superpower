@@ -20,7 +20,7 @@ const EnvSchema = z.object({
   LLM_TIMEOUT_MS: z.coerce.number().int().positive().default(30000),
 
   // --- News Search ---
-  SEARCH_API_KIND: z.enum(['mock', 'bing-news', 'rss', 'ddg', 'aggregator']).default('mock'),
+  SEARCH_API_KIND: z.enum(['mock', 'bing-news', 'rss', 'ddg', 'aggregator', 'tavily']).default('tavily'),
   SEARCH_API_KEY: z.string().default(''),
   SEARCH_API_BASE_URL: z.string().url().default('https://api.bing.microsoft.com/v7.0/news/search'),
   BING_NEWS_API_KEY: z.string().default(''),  // empty = degraded fallback (Plan-D Task 7)
