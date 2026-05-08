@@ -1,4 +1,5 @@
 import { boolean, index, integer, pgTable, text, timestamp, uuid } from 'drizzle-orm/pg-core'
+import { sql } from 'drizzle-orm'
 import { halfDayEnum } from './prediction'
 
 export const watchLists = pgTable(
@@ -14,6 +15,7 @@ export const watchLists = pgTable(
     kRangeMin: integer('k_range_min').notNull().default(1),
     kRangeMax: integer('k_range_max').notNull().default(14),
     isActive: boolean('is_active').notNull().default(true),
+    keywords: text('keywords').array().notNull().default(sql`ARRAY[]::text[]`),
     createdBy: uuid('created_by').notNull(),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),

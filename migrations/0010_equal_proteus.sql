@@ -1,0 +1,1 @@
+ALTER TABLE "watch_lists" ADD COLUMN "keywords" text[] DEFAULT ARRAY[]::text[] NOT NULL;
