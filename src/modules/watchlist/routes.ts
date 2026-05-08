@@ -3,7 +3,7 @@ import { zValidator } from '@hono/zod-validator'
 import { z } from 'zod'
 import type { Db } from '@/db/client'
 import { authRequired, type AuthContext } from '@/auth/middleware'
-import { createWatchList, getWatchList, listWatchLists, setWatchListActive } from './service'
+import { createWatchList, getWatchList, listWatchLists, setWatchListActive, updateWatchListKeywords } from './service'
 import { NotFound } from '@/lib/errors'
 
 const createSchema = z.object({
@@ -15,9 +15,12 @@ const createSchema = z.object({
   regionVersion: z.number().int().positive(),
   kRangeMin: z.number().int().positive().optional(),
   kRangeMax: z.number().int().positive().optional(),
+  keywords: z.array(z.string().min(1).max(60)).max(20).optional(),
 })
 
 const setActiveSchema = z.object({ isActive: z.boolean() })
+
+const updateKeywordsSchema = z.object({ keywords: z.array(z.string().min(1).max(60)).max(20) })
 
 type Vars = { auth: AuthContext }
 
@@ -43,6 +46,7 @@ export function watchlistRoutes(db: Db) {
     if (body.description !== undefined) input.description = body.description
     if (body.kRangeMin !== undefined) input.kRangeMin = body.kRangeMin
     if (body.kRangeMax !== undefined) input.kRangeMax = body.kRangeMax
+    if (body.keywords !== undefined) input.keywords = body.keywords
     const wl = await createWatchList(db, input)
     return c.json(wl, 201)
   })
@@ -56,6 +60,18 @@ export function watchlistRoutes(db: Db) {
   app.patch('/:id/active', authRequired(db), zValidator('json', setActiveSchema), async (c) => {
     const wl = await setWatchListActive(db, c.req.param('id'), c.req.valid('json').isActive)
     return c.json(wl)
+  })
+
+  app.patch('/:id/keywords', authRequired(db), zValidator('json', updateKeywordsSchema), async (c) => {
+    const id = c.req.param('id')
+    const body = c.req.valid('json')
+    try {
+      const wl = await updateWatchListKeywords(db, { id, keywords: body.keywords })
+      return c.json(wl)
+    } catch (e) {
+      if ((e as Error).message.includes('not found')) throw NotFound(`watchlist ${id} not found`)
+      throw e
+    }
   })
 
   return app

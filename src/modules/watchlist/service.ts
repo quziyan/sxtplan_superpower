@@ -11,6 +11,7 @@ export type CreateWatchListInput = {
   regionVersion: number
   kRangeMin?: number
   kRangeMax?: number
+  keywords?: string[]
   createdBy: string
 }
 
@@ -24,9 +25,11 @@ export async function createWatchList(db: Db, input: CreateWatchListInput): Prom
     regionVersion: input.regionVersion,
     kRangeMin: input.kRangeMin ?? 1,
     kRangeMax: input.kRangeMax ?? 14,
+    keywords: input.keywords ?? [],
     createdBy: input.createdBy,
   }).returning()
-  return row!
+  if (!row) throw new Error('insert returned no row')
+  return row
 }
 
 export async function listWatchLists(db: Db, opts: { activeOnly?: boolean } = {}): Promise<WatchList[]> {
@@ -47,5 +50,22 @@ export async function setWatchListActive(db: Db, id: string, isActive: boolean):
     .where(eq(watchLists.id, id))
     .returning()
   if (!row) throw new Error(`watchlist ${id} not found`)
+  return row
+}
+
+export type UpdateWatchListKeywordsInput = {
+  id: string
+  keywords: string[]
+}
+
+export async function updateWatchListKeywords(
+  db: Db,
+  input: UpdateWatchListKeywordsInput,
+): Promise<WatchList> {
+  const [row] = await db.update(watchLists)
+    .set({ keywords: input.keywords, updatedAt: new Date() })
+    .where(eq(watchLists.id, input.id))
+    .returning()
+  if (!row) throw new Error(`watchlist ${input.id} not found`)
   return row
 }
