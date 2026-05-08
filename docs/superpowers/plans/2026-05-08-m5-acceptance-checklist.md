@@ -27,6 +27,7 @@
 | T10 | `69c7951` | fix(prediction): recompute-now FULL P5 default + optional INCR mode (G5, m5) |
 | T11 | `abe65ff` | test(e2e): m5 news-intake full pipeline — ingest → triage → refresh (REAL LLM) |
 | T12 | `1c37f88` | test(integration): tavily acceptance test gated by INTEGRATION_TESTS env (m5) |
+| T13 | `d29430d` | docs(m5): README section + acceptance checklist |
 
 ## ISC Coverage
 
