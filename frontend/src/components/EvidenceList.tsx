@@ -1,5 +1,15 @@
 import type { ConfidenceSnapshot } from '@/lib/prediction-api'
 
+// m5 UI fix: 后端 occurredAt 是 ISO UTC,前端按 Asia/Shanghai (UTC+8) 显示
+const TZ = 'Asia/Shanghai'
+function fmtCnTime(iso: string): string {
+  return new Date(iso).toLocaleString('zh-CN', {
+    timeZone: TZ, hour12: false,
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit',
+  })
+}
+
 export function EvidenceList({ snapshots }: { snapshots: ConfidenceSnapshot[] }) {
   // m2: evidence 列表的真实接口 m3 暴露;暂用 snapshots 中带 reasoning 的条目当时间线展示
   const withReasoning = snapshots.filter(s => s.reasoning && s.reasoning.length > 0)
@@ -18,7 +28,7 @@ export function EvidenceList({ snapshots }: { snapshots: ConfidenceSnapshot[] })
           <div>
             <div className="evidence-row__title">{s.operator ?? '系统'}</div>
             <div className="evidence-row__meta">
-              <span>{s.occurredAt.slice(0, 16)}</span>
+              <span>{fmtCnTime(s.occurredAt)}</span>
               <span>conf {s.confidence}</span>
               {s.confidenceCiLow !== null && s.confidenceCiHigh !== null && (
                 <span>CI [{s.confidenceCiLow}, {s.confidenceCiHigh}]</span>
