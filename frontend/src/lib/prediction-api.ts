@@ -60,7 +60,7 @@ export type ConfidenceSnapshot = {
 }
 
 export async function listPredictions(
-  opts: { status?: PredictionStatus; limit?: number; includeLatestSnapshot?: boolean } = {},
+  opts: { status?: PredictionStatus; limit?: number; includeLatestSnapshot?: boolean; hasEvidence?: boolean } = {},
 ): Promise<PredictionListItem[]> {
   const params = new URLSearchParams()
   if (opts.status) params.set('status', opts.status)
@@ -69,6 +69,8 @@ export async function listPredictions(
   // `latest_snapshot` is supported; future flags can be appended without
   // breaking the contract.
   if (opts.includeLatestSnapshot) params.set('include', 'latest_snapshot')
+  // m5 UI: 过滤无证据 prediction(分析师 proposal 列表只看 actionable 的)
+  if (opts.hasEvidence) params.set('has_evidence', 'true')
   const qs = params.toString()
   return api<PredictionListItem[]>(`/predictions${qs ? `?${qs}` : ''}`)
 }

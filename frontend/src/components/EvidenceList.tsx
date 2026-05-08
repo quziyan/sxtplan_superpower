@@ -68,7 +68,7 @@ export function EvidenceList({
 
       {/* per-snapshot 块 */}
       {blocks.map(({ snap, cited }) => (
-        <div key={snap.id} className="evidence-row" style={{ flexDirection: 'column', alignItems: 'stretch' }}>
+        <div key={snap.id} className="evidence-row" id={`snap-${snap.id}`} style={{ flexDirection: 'column', alignItems: 'stretch' }}>
           <div style={{ display: 'flex', gap: 'var(--sp-3)', alignItems: 'center', marginBottom: 'var(--sp-2)' }}>
             <span className={`tag ${snap.kind === 'FULL' ? 'tag--accent' : snap.kind === 'MANUAL' ? 'tag--warn' : 'tag--ghost'}`}>
               {snap.kind}
@@ -109,9 +109,15 @@ export function EvidenceList({
                 </div>
               ))}
             </div>
+          ) : evidence.length > 0 ? (
+            <div style={{ fontSize: 'var(--fs-2)', color: 'var(--c-muted)', paddingLeft: 'var(--sp-3)', borderLeft: '2px solid var(--c-border, #2a2f3a)' }}>
+              📂 该次推理未单独 cite 新闻 — <a href="#evidence-pool" style={{ color: COLOR_LINK, textDecoration: 'underline' }}>
+                跳转证据池({evidence.length} 条)
+              </a>
+            </div>
           ) : (
             <div style={{ fontSize: 'var(--fs-2)', color: 'var(--c-muted)', fontStyle: 'italic' }}>
-              该次推理未引用具体新闻(可能基于已有证据池整体或无证据)
+              该次推理无证据(LLM 在证据池为空时基于 V/T/region metadata 评估)
             </div>
           )}
         </div>
@@ -119,7 +125,7 @@ export function EvidenceList({
 
       {/* 未被任何 snapshot 引用的 evidence(原始证据池里 LLM 没 cite 的)*/}
       {orphanEvidence.length > 0 && (
-        <div style={{ marginTop: 'var(--sp-4)' }}>
+        <div id="evidence-pool" style={{ marginTop: 'var(--sp-4)' }}>
           <div style={{ fontSize: 'var(--fs-2)', color: 'var(--c-muted)', marginBottom: 'var(--sp-2)' }}>
             📂 证据池剩余({orphanEvidence.length} 条 — 已写入但 LLM 未引用)
           </div>

@@ -47,10 +47,13 @@ export function predictionRoutes(db: Db, deps: PredictionRouteDeps = {}) {
     const includeRaw = c.req.query('include') ?? ''
     const includeTokens = includeRaw.split(',').map((t) => t.trim()).filter(Boolean)
     const includeLatestSnapshot = includeTokens.includes('latest_snapshot')
+    // m5 UI:?has_evidence=true 只返回有证据的 prediction
+    const hasEvidence = c.req.query('has_evidence') === 'true'
     return c.json(await listPredictions(db, {
       ...(status ? { status: status as any } : {}),
       ...(limit ? { limit } : {}),
       ...(includeLatestSnapshot ? { includeLatestSnapshot: true } : {}),
+      ...(hasEvidence ? { hasEvidence: true } : {}),
     }))
   })
 

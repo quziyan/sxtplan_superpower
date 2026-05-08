@@ -2,6 +2,7 @@ import { and, eq, inArray, sql } from 'drizzle-orm'
 import type { Db } from '@/db/client'
 import {
   confidenceSnapshots,
+  newsItems,
   predictions,
   type ConfidenceSnapshot,
   type Prediction,
@@ -17,6 +18,11 @@ export type ListPredictionsOpts = {
    * Default `false` so existing callers stay byte-for-byte compatible.
    */
   includeLatestSnapshot?: boolean
+  /**
+   * m5 UI 改进:只返回有 ≥ 1 条 news_evidence 的 prediction(分析师 proposal
+   * 列表只想看"有证据"的)。Backend SQL 用 EXISTS 子查询过滤,O(N)。
+   */
+  hasEvidence?: boolean
 }
 
 /**
@@ -41,6 +47,22 @@ export async function listPredictions(
   opts: ListPredictionsOpts = {},
 ): Promise<PredictionListItem[]> {
   const limit = opts.limit ?? 100
+  // m5 UI:hasEvidence=true 时用 raw SQL 加 EXISTS,因 drizzle 的 .where 链不便组合
+  // status + EXISTS。保持简单,raw SQL 走得通就行。
+  if (opts.hasEvidence) {
+    const rawRows = await db.execute<typeof predictions.$inferSelect>(sql`
+      SELECT p.* FROM predictions p
+      WHERE EXISTS (SELECT 1 FROM news_evidence ne WHERE ne.prediction_id = p.id)
+        ${opts.status ? sql`AND p.status = ${opts.status}` : sql``}
+      ORDER BY p.created_at DESC
+      LIMIT ${limit}
+    `)
+    const rows = rawRows as unknown as Prediction[]
+    if (!opts.includeLatestSnapshot || rows.length === 0) {
+      return rows
+    }
+    return attachLatestSnapshots(db, rows)
+  }
   const rows = opts.status
     ? await db.select().from(predictions)
         .where(eq(predictions.status, opts.status))
@@ -53,12 +75,10 @@ export async function listPredictions(
   if (!opts.includeLatestSnapshot || rows.length === 0) {
     return rows
   }
+  return attachLatestSnapshots(db, rows)
+}
 
-  // Plan-C T33 / ISC-41: batch-load latest snapshot per prediction in one
-  // query, then group via Map to avoid N+1 (mirrors the T27 detail-route
-  // mediaAssets grouping pattern). We pull every snapshot for the IN(...)
-  // set ordered by occurredAt DESC and keep only the first row per
-  // predictionId — that's the latest by definition.
+async function attachLatestSnapshots(db: Db, rows: Prediction[]): Promise<PredictionListItem[]> {
   const ids = rows.map((r) => r.id)
   const allSnaps = await db.select().from(confidenceSnapshots)
     .where(inArray(confidenceSnapshots.predictionId, ids))
@@ -122,21 +142,28 @@ export type NewsItemSummary = {
 
 export async function getNewsByIds(db: Db, ids: string[]): Promise<Record<string, NewsItemSummary>> {
   if (ids.length === 0) return {}
-  const rows = await db.execute<{
-    id: string; title: string; url: string; source_label: string; source_kind: string
-    summary_zh: string | null; raw_snippet: string | null; published_at: Date | null
-  }>(sql`
-    SELECT id, title, url, source_label, source_kind::text AS source_kind,
-           summary_zh, raw_snippet, published_at
-    FROM news_items
-    WHERE id = ANY(${ids}::uuid[])
-  `)
+  // 用 drizzle inArray() —— 之前 ${ids}::uuid[] 模板会把数组序列化成单字符串 "uuid"
+  // 触发 PG malformed array literal。
+  const rows = await db
+    .select({
+      id: newsItems.id,
+      title: newsItems.title,
+      url: newsItems.url,
+      sourceLabel: newsItems.sourceLabel,
+      sourceKind: newsItems.sourceKind,
+      summaryZh: newsItems.summaryZh,
+      rawSnippet: newsItems.rawSnippet,
+      publishedAt: newsItems.publishedAt,
+    })
+    .from(newsItems)
+    .where(inArray(newsItems.id, ids))
+
   const out: Record<string, NewsItemSummary> = {}
-  for (const r of rows as any[]) {
+  for (const r of rows) {
     out[r.id] = {
       id: r.id, title: r.title, url: r.url,
-      sourceLabel: r.source_label, sourceKind: r.source_kind,
-      summaryZh: r.summary_zh, rawSnippet: r.raw_snippet, publishedAt: r.published_at,
+      sourceLabel: r.sourceLabel, sourceKind: r.sourceKind as string,
+      summaryZh: r.summaryZh, rawSnippet: r.rawSnippet, publishedAt: r.publishedAt,
     }
   }
   return out

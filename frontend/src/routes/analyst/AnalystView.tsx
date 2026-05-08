@@ -34,7 +34,8 @@ export function AnalystView({ onOpenPrediction }: { onOpenPrediction?: (id: stri
   }
 
   useEffect(() => {
-    Promise.all([listWatchLists(), listTaskCards(), listPredictions({ limit: 100 })])
+    // m5 UI: hasEvidence=true 让后端过滤无证据 prediction(分析师只看 actionable 提案)
+    Promise.all([listWatchLists(), listTaskCards(), listPredictions({ limit: 100, hasEvidence: true })])
       .then(([wls, tcs, ps]) => { setWatchlists(wls); setTaskcards(tcs); setPredictions(ps) })
       .catch(console.error)
       .finally(() => setLoading(false))
