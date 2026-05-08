@@ -8,6 +8,7 @@ import { Btn } from './Btn'
 import {
   approvePrediction,
   getPredictionDetail,
+  recomputeNow,
   rejectPrediction,
   type PredictionDetailResponse,
 } from '@/lib/prediction-api'
@@ -30,6 +31,9 @@ export function PredictionDetail({
   const [data, setData] = useState<PredictionDetailResponse | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+  // m5 G5 UI 接通:点"立即重算"后,后端 enqueue 到 fullRecalcQueue。worker
+  // 消费 ~10s 后写新 snapshot;UI 自动 12s 后 refetch + 提示状态。
+  const [recomputing, setRecomputing] = useState<null | 'pending' | 'done' | 'error'>(null)
 
   useEffect(() => {
     getPredictionDetail(predictionId).then(setData).catch(e => setError((e as Error).message))
@@ -77,6 +81,27 @@ export function PredictionDetail({
       setError((e as Error).message)
     } finally {
       setBusy(false)
+    }
+  }
+  const onRecompute = async () => {
+    setRecomputing('pending')
+    try {
+      await recomputeNow(p.id)
+      // 后端 enqueue full-recalc + manualTrigger=true → P5 → refresh.FULL → LLM ~10s
+      // 12s 后 refetch 一次,新 snapshot 应已写入
+      setTimeout(async () => {
+        try {
+          await refetch()
+          setRecomputing('done')
+          setTimeout(() => setRecomputing(null), 4000)
+        } catch (e) {
+          setError((e as Error).message)
+          setRecomputing('error')
+        }
+      }, 12000)
+    } catch (e) {
+      setError((e as Error).message)
+      setRecomputing('error')
     }
   }
 
@@ -132,12 +157,27 @@ export function PredictionDetail({
         </div>
         <DispatchPanel dispatches={data.dispatchTasks} onMutated={handleMutation} />
       </section>
-      {p.status === 'PROPOSED' && (
-        <section style={{ display: 'flex', gap: 'var(--sp-2)' }}>
-          <Btn variant="ok" disabled={busy} onClick={onApprove}>批准</Btn>
-          <Btn variant="danger" disabled={busy} onClick={onReject}>驳回</Btn>
-        </section>
-      )}
+      <section style={{ display: 'flex', gap: 'var(--sp-2)', alignItems: 'center', flexWrap: 'wrap' }}>
+        {p.status === 'PROPOSED' && (
+          <>
+            <Btn variant="ok" disabled={busy || recomputing === 'pending'} onClick={onApprove}>批准</Btn>
+            <Btn variant="danger" disabled={busy || recomputing === 'pending'} onClick={onReject}>驳回</Btn>
+          </>
+        )}
+        <Btn disabled={busy || recomputing === 'pending'} onClick={onRecompute}>
+          {recomputing === 'pending' ? '重算中…(~12s)' : '立即重算'}
+        </Btn>
+        {recomputing === 'done' && (
+          <span style={{ color: 'var(--c-good)', fontSize: 'var(--fs-2)' }}>
+            ✓ 已刷新 — 时间线/置信度若有更新已显示
+          </span>
+        )}
+        {recomputing === 'error' && (
+          <span style={{ color: 'var(--c-bad)', fontSize: 'var(--fs-2)' }}>
+            ✗ 重算失败,看 worker 终端 logs
+          </span>
+        )}
+      </section>
     </div>
   )
 }

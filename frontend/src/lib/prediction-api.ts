@@ -102,6 +102,11 @@ export async function setManualConfidence(
   })
 }
 
-export async function recomputeNow(id: string): Promise<{ ok: boolean; message: string }> {
-  return api<{ ok: boolean; message: string }>(`/predictions/${id}/recompute-now`, { method: 'POST', body: '{}' })
+export async function recomputeNow(id: string): Promise<{ ok: boolean; mode: 'FULL' | 'INCR'; message: string }> {
+  // m5 G5: 后端 recompute-now 改为真触发 fullRecalcQueue + manualTrigger=true (P5)
+  // 返回 { ok, mode: 'FULL', message } —— 默认 FULL P5 模式
+  return api<{ ok: boolean; mode: 'FULL' | 'INCR'; message: string }>(
+    `/predictions/${id}/recompute-now`,
+    { method: 'POST', body: '{}' },
+  )
 }
