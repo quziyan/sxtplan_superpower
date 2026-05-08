@@ -11,7 +11,7 @@ import { fullRecalcQueue, refreshQueue } from '@/scheduler/queue'
 import { dispatchTasks, mediaAssets, type DispatchTask, type MediaAsset } from '@/db/schema/dispatch'
 import { requestCancel } from '@/dispatch/service'
 import { writeConfidenceSnapshot } from './confidence'
-import { getPrediction, getSnapshots, listPredictions, transitionStatus } from './service'
+import { getPrediction, getSnapshots, getNewsEvidence, listPredictions, transitionStatus } from './service'
 
 const manualConfSchema = z.object({
   confidence: z.number().int().min(0).max(100),
@@ -57,6 +57,8 @@ export function predictionRoutes(db: Db, deps: PredictionRouteDeps = {}) {
     const pred = await getPrediction(db, c.req.param('id'))
     if (!pred) throw NotFound(`prediction ${c.req.param('id')} not found`)
     const snaps = await getSnapshots(db, pred.id)
+    // m5 UI 改进:inline news_evidence 关联的新闻原文(标题+摘要+URL)
+    const evidence = await getNewsEvidence(db, pred.id)
 
     // Plan-C T27 / ISC-35: inline dispatchTasks (with nested mediaAssets)
     // alongside the prediction detail. One round trip from the UI for the
@@ -90,6 +92,7 @@ export function predictionRoutes(db: Db, deps: PredictionRouteDeps = {}) {
       prediction: pred,
       snapshots: snaps,
       dispatchTasks: dispatchTasksOut,
+      evidence,
     })
   })
 

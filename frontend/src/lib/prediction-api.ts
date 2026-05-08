@@ -73,10 +73,29 @@ export async function listPredictions(
   return api<PredictionListItem[]>(`/predictions${qs ? `?${qs}` : ''}`)
 }
 
+// m5 UI 改进:GET /predictions/:id 现在 inline news_evidence 关联的新闻原文
+export type NewsEvidenceWithItem = {
+  evidenceId: string
+  weight: 'HIGH' | 'MED' | 'LOW'
+  cited: boolean
+  addedAt: string
+  news: {
+    id: string
+    title: string
+    url: string
+    sourceLabel: string
+    sourceKind: string
+    summaryZh: string | null
+    rawSnippet: string | null
+    publishedAt: string | null
+  }
+}
+
 export type PredictionDetailResponse = {
   prediction: Prediction
   snapshots: ConfidenceSnapshot[]
   dispatchTasks: DispatchTaskWithMedia[]
+  evidence: NewsEvidenceWithItem[]
 }
 
 export async function getPredictionDetail(id: string): Promise<PredictionDetailResponse> {

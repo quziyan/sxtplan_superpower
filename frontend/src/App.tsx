@@ -50,6 +50,7 @@ export default function App() {
         {openPrediction && (
           <PredictionDetail
             predictionId={openPrediction}
+            activeRole={role}
             onMutated={() => {
               setOpenPrediction(null)
               setRefreshKey(k => k + 1)  // 强制重渲染当前角色视图

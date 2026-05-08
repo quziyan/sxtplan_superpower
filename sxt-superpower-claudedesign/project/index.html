@@ -1,0 +1,246 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>新闻驱动专用车辆决策预测 · CNP-DSS</title>
+<link rel="stylesheet" href="styles.css" />
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+</head>
+<body>
+<div id="root" class="root"></div>
+
+<script type="text/babel" src="data.js"></script>
+<script type="text/babel" src="components.jsx"></script>
+<script type="text/babel" src="view-analyst.jsx"></script>
+<script type="text/babel" src="view-prediction-detail.jsx"></script>
+<script type="text/babel" src="view-decision-reviewer.jsx"></script>
+<script type="text/babel" src="view-new-task.jsx"></script>
+<script type="text/babel" src="tweaks-panel.jsx"></script>
+
+<script type="text/babel">
+const { useState, useMemo } = React;
+
+const TWEAK_DEFAULTS = /*EDITMODE-BEGIN*/{
+  "role": "analyst",
+  "density": "comfortable",
+  "accent": "blue",
+  "showCI": true,
+  "showThreshold": true
+}/*EDITMODE-END*/;
+
+const ROLES = [
+  { id: 'analyst', label: '分析师', sub: '陈云岭 · 监视 + 推送', icon: 'eye', color: 'var(--c-accent)' },
+  { id: 'decision', label: '决策者', sub: '王主任 · 审批调度', icon: 'check', color: 'var(--c-warn)' },
+  { id: 'reviewer', label: '复盘师', sub: '李研究员 · 校准 + 沉淀', icon: 'book', color: 'var(--c-info)' },
+];
+
+const ACCENTS = {
+  blue: { '--c-accent': '#4ea3ff', '--c-accent-h': '#6db3ff', '--c-accent-soft': 'rgba(78,163,255,0.12)' },
+  amber: { '--c-accent': '#f5b14f', '--c-accent-h': '#ffc370', '--c-accent-soft': 'rgba(245,177,79,0.14)' },
+  emerald: { '--c-accent': '#5cc796', '--c-accent-h': '#76d6a8', '--c-accent-soft': 'rgba(92,199,150,0.14)' },
+  rose: { '--c-accent': '#ff6b8a', '--c-accent-h': '#ff85a0', '--c-accent-soft': 'rgba(255,107,138,0.14)' },
+};
+
+function App() {
+  const [t, setTweak] = useTweaks(TWEAK_DEFAULTS);
+  const [openPrediction, setOpenPrediction] = useState(null);
+  const [showSchema, setShowSchema] = useState(false);
+  const [showNewTask, setShowNewTask] = useState(false);
+
+  // Apply accent + density to root
+  React.useEffect(() => {
+    const root = document.documentElement;
+    const accent = ACCENTS[t.accent] || ACCENTS.blue;
+    Object.entries(accent).forEach(([k, v]) => root.style.setProperty(k, v));
+    root.dataset.density = t.density;
+  }, [t.accent, t.density]);
+
+  const data = window.SYSTEM_DATA;
+  const role = ROLES.find(r => r.id === t.role) || ROLES[0];
+
+  return (
+    <div className="app">
+      {/* Top bar */}
+      <header className="topbar">
+        <div className="topbar__brand">
+          <div className="topbar__logo">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+              <rect x="3" y="3" width="18" height="18" rx="3" fill="var(--c-accent)" opacity="0.12" />
+              <path d="M6 16 L10 9 L13 13 L18 6" stroke="var(--c-accent)" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" fill="none" />
+              <circle cx="18" cy="6" r="1.6" fill="var(--c-accent)" />
+            </svg>
+          </div>
+          <div>
+            <div className="topbar__title">CNP <span style={{ color: 'var(--c-text-3)', fontWeight: 400 }}>· 新闻驱动决策预测</span></div>
+            <div className="topbar__sub">v0.4.2 · 广州 · {new Date().toLocaleDateString('zh-CN')} 09:14</div>
+          </div>
+        </div>
+
+        {/* Role tabs */}
+        <div className="topbar__roles">
+          {ROLES.map(r => (
+            <button key={r.id}
+              className={`role-tab ${t.role === r.id ? 'active' : ''}`}
+              onClick={() => setTweak('role', r.id)}>
+              <Icon name={r.icon} size={13} />
+              <div style={{ textAlign: 'left' }}>
+                <div style={{ fontSize: 12, fontWeight: 500 }}>{r.label}</div>
+                <div style={{ fontSize: 10, color: 'var(--c-text-3)', lineHeight: 1.2 }}>{r.sub}</div>
+              </div>
+            </button>
+          ))}
+        </div>
+
+        <div className="topbar__actions">
+          <button className="iconbtn" title="搜索 ⌘K"><Icon name="search" size={14} /></button>
+          <button className="iconbtn" title="通知">
+            <Icon name="bell" size={14} />
+            <span className="iconbtn__dot"></span>
+          </button>
+          <button className="iconbtn" title="模式信息" onClick={() => setShowSchema(!showSchema)}>
+            <Icon name="info" size={14} />
+          </button>
+          <div className="user-pill">
+            <span className="user-pill__avatar" style={{ background: role.color }}>{role.label[0]}</span>
+            <div>
+              <div style={{ fontSize: 11.5, fontWeight: 500 }}>{role.sub.split(' · ')[0]}</div>
+              <div style={{ fontSize: 10, color: 'var(--c-text-3)' }}>{role.label}态</div>
+            </div>
+          </div>
+        </div>
+      </header>
+
+      {/* Body */}
+      <div className="app__body">
+        {t.role === 'analyst' && <AnalystView data={data} onOpenPrediction={setOpenPrediction} onNewTask={() => setShowNewTask(true)} />}
+        {t.role === 'decision' && <DecisionView data={data} onOpenPrediction={setOpenPrediction} />}
+        {t.role === 'reviewer' && <ReviewerView data={data} onOpenPrediction={setOpenPrediction} />}
+      </div>
+
+      {/* Detail overlay */}
+      {openPrediction && (
+        <PredictionDetail
+          predictionId={openPrediction}
+          data={data}
+          onClose={() => setOpenPrediction(null)}
+          onAct={() => setOpenPrediction(null)}
+        />
+      )}
+
+      {/* Schema info side panel */}
+      {showSchema && <SchemaPanel onClose={() => setShowSchema(false)} />}
+
+      {/* New Task Card modal */}
+      {showNewTask && <NewTaskCardModal data={data} onClose={() => setShowNewTask(false)} />}
+
+      {/* Tweaks */}
+      <TweaksPanel title="Tweaks">
+        <TweakSection title="角色态">
+          <TweakRadio
+            value={t.role} onChange={v => setTweak('role', v)}
+            options={[
+              { value: 'analyst', label: '分析师' },
+              { value: 'decision', label: '决策者' },
+              { value: 'reviewer', label: '复盘师' },
+            ]}
+          />
+        </TweakSection>
+        <TweakSection title="主色">
+          <TweakColor
+            value={t.accent} onChange={v => setTweak('accent', v)}
+            options={[
+              { value: 'blue', color: '#4ea3ff' },
+              { value: 'amber', color: '#f5b14f' },
+              { value: 'emerald', color: '#5cc796' },
+              { value: 'rose', color: '#ff6b8a' },
+            ]}
+          />
+        </TweakSection>
+        <TweakSection title="信息密度">
+          <TweakRadio
+            value={t.density} onChange={v => setTweak('density', v)}
+            options={[
+              { value: 'compact', label: '紧凑' },
+              { value: 'comfortable', label: '舒适' },
+            ]}
+          />
+        </TweakSection>
+        <TweakSection title="可视化">
+          <TweakToggle label="显示 95% CI 区间" value={t.showCI} onChange={v => setTweak('showCI', v)} />
+          <TweakToggle label="显示调度阈值线" value={t.showThreshold} onChange={v => setTweak('showThreshold', v)} />
+        </TweakSection>
+        <TweakSection title="导航快捷">
+          <TweakButton onClick={() => setOpenPrediction('P-2026-0511-A')}>打开示例预测</TweakButton>
+          <TweakButton onClick={() => setShowNewTask(true)}>新建任务卡</TweakButton>
+          <TweakButton onClick={() => setShowSchema(true)}>查看数据模式</TweakButton>
+        </TweakSection>
+      </TweaksPanel>
+    </div>
+  );
+}
+
+// Schema reference panel — system designer's view
+const SchemaPanel = ({ onClose }) => (
+  <div className="detail-pane" onClick={onClose}>
+    <div className="detail-pane__panel" onClick={e => e.stopPropagation()} style={{ maxWidth: 720 }}>
+      <div style={{ padding: 'var(--sp-5) var(--sp-6) var(--sp-3)', borderBottom: '1px solid var(--c-line)', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+        <div>
+          <div style={{ fontSize: 11, color: 'var(--c-text-3)', fontFamily: 'var(--ff-mono)', marginBottom: 4 }}>SYSTEM REFERENCE</div>
+          <h2 style={{ margin: 0, fontSize: 18 }}>数据模式 & 触发器一览</h2>
+          <div style={{ fontSize: 11.5, color: 'var(--c-text-3)', marginTop: 4 }}>对应工程文档 §3 数据模型 / §4 系统行为</div>
+        </div>
+        <button className="btn btn--ghost" onClick={onClose}><Icon name="x" size={14} /></button>
+      </div>
+      <div style={{ padding: 'var(--sp-5) var(--sp-6)', display: 'grid', gap: 'var(--sp-4)' }}>
+        <Card title="核心实体" sub="Postgres 主库 · 单 schema · 两套权限角色">
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, fontSize: 11.5 }}>
+            {[
+              ['region', '区域定义（命名 / 即时）+ 版本快照'],
+              ['watchlist / watchlist_item', '监视清单 + 维度组合'],
+              ['ad_hoc_query', '任务卡（离散一次性查询）'],
+              ['prediction', '预测主表 · 状态机 PROPOSED→…'],
+              ['confidence_snapshot', 'INCR / FULL / MANUAL · 追加式'],
+              ['news_evidence', '新闻证据 · 脱敏后副本'],
+              ['dispatch / dispatch_state', '调度任务 + 状态'],
+              ['retro_report', '复盘报告（含可视证据）'],
+              ['success_case', '案例库 + 嵌入向量'],
+              ['operation_audit', 'INSERT-only · DB 级隔离'],
+            ].map(([t, d]) => (
+              <div key={t} style={{ padding: 8, background: 'var(--c-bg-1)', borderRadius: 4 }}>
+                <code style={{ color: 'var(--c-accent)', fontSize: 11 }}>{t}</code>
+                <div style={{ color: 'var(--c-text-3)', marginTop: 2 }}>{d}</div>
+              </div>
+            ))}
+          </div>
+        </Card>
+
+        <Card title="P1-P5 触发条件" sub="决定何时执行 FULL 全量重算">
+          <div style={{ fontSize: 11.5 }}>
+            <div style={{ display: 'flex', gap: 8, padding: '4px 0' }}><b style={{ width: 30 }}>P1</b><span>距上次 FULL 累计 ≥5 次 INCR</span></div>
+            <div style={{ display: 'flex', gap: 8, padding: '4px 0' }}><b style={{ width: 30 }}>P2</b><span>距上次 FULL ≥7 天</span></div>
+            <div style={{ display: 'flex', gap: 8, padding: '4px 0' }}><b style={{ width: 30 }}>P3</b><span>累计新增证据数 ≥10</span></div>
+            <div style={{ display: 'flex', gap: 8, padding: '4px 0' }}><b style={{ width: 30 }}>P4</b><span>漂移 |Σ Δconf| &gt; 25pp</span></div>
+            <div style={{ display: 'flex', gap: 8, padding: '4px 0' }}><b style={{ width: 30 }}>P5</b><span>分析师手动触发"立即重算"</span></div>
+          </div>
+        </Card>
+
+        <Card title="刷新 cadence（K = 决策→出动天数）">
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6, fontSize: 11.5 }}>
+            <div style={{ padding: 8, background: 'var(--c-bg-1)', borderRadius: 4 }}>K ≤ 3 天 → 每 6 小时</div>
+            <div style={{ padding: 8, background: 'var(--c-bg-1)', borderRadius: 4 }}>3 &lt; K ≤ 14 → 每天</div>
+            <div style={{ padding: 8, background: 'var(--c-bg-1)', borderRadius: 4 }}>14 &lt; K ≤ 60 → 每 2 天</div>
+            <div style={{ padding: 8, background: 'var(--c-bg-1)', borderRadius: 4 }}>K &gt; 60 → 每周</div>
+          </div>
+        </Card>
+      </div>
+    </div>
+  </div>
+);
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+</script>
+</body>
+</html>

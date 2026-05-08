@@ -92,6 +92,51 @@ export async function getSnapshots(db: Db, predictionId: string) {
     .orderBy(sql`${confidenceSnapshots.occurredAt} ASC`)
 }
 
+export type NewsEvidenceWithItem = {
+  evidenceId: string
+  weight: 'HIGH' | 'MED' | 'LOW'
+  cited: boolean
+  addedAt: Date
+  news: {
+    id: string
+    title: string
+    url: string
+    sourceLabel: string
+    sourceKind: string
+    summaryZh: string | null
+    rawSnippet: string | null
+    publishedAt: Date | null
+  }
+}
+
+export async function getNewsEvidence(db: Db, predictionId: string): Promise<NewsEvidenceWithItem[]> {
+  const rows = await db.execute<{
+    evidence_id: string; weight: 'HIGH' | 'MED' | 'LOW'; cited: boolean; added_at: Date
+    news_id: string; title: string; url: string; source_label: string; source_kind: string
+    summary_zh: string | null; raw_snippet: string | null; published_at: Date | null
+  }>(sql`
+    SELECT ne.id AS evidence_id, ne.weight, ne.cited, ne.added_at,
+           n.id AS news_id, n.title, n.url, n.source_label, n.source_kind::text AS source_kind,
+           n.summary_zh, n.raw_snippet, n.published_at
+    FROM news_evidence ne
+    JOIN news_items n ON n.id = ne.news_id
+    WHERE ne.prediction_id = ${predictionId}::uuid
+    ORDER BY ne.added_at DESC
+    LIMIT 50
+  `)
+  return (rows as any[]).map(r => ({
+    evidenceId: r.evidence_id,
+    weight: r.weight,
+    cited: r.cited,
+    addedAt: r.added_at,
+    news: {
+      id: r.news_id, title: r.title, url: r.url,
+      sourceLabel: r.source_label, sourceKind: r.source_kind,
+      summaryZh: r.summary_zh, rawSnippet: r.raw_snippet, publishedAt: r.published_at,
+    },
+  }))
+}
+
 export type StatusTransition = {
   predictionId: string
   to: 'APPROVED' | 'REJECTED'

@@ -28,8 +28,8 @@ import { listRegions, type RegionListItem } from '@/lib/region-api'
 // bubble-up keeps the parent list (e.g. the inbox) in sync.
 
 export function PredictionDetail({
-  predictionId, onMutated,
-}: { predictionId: string; onMutated?: () => void }) {
+  predictionId, onMutated, activeRole,
+}: { predictionId: string; onMutated?: () => void; activeRole?: string | null }) {
   const [data, setData] = useState<PredictionDetailResponse | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
@@ -164,7 +164,7 @@ export function PredictionDetail({
           <div className="section-h__title">推理与证据</div>
           <div className="section-h__sub">m2 简化:展示快照 reasoning;真证据列表 m3 接</div>
         </div>
-        <EvidenceList snapshots={data.snapshots} />
+        <EvidenceList snapshots={data.snapshots} evidence={data.evidence ?? []} />
       </section>
       <section>
         <div className="section-h">
@@ -174,11 +174,16 @@ export function PredictionDetail({
         <DispatchPanel dispatches={data.dispatchTasks} onMutated={handleMutation} />
       </section>
       <section style={{ display: 'flex', gap: 'var(--sp-2)', alignItems: 'center', flexWrap: 'wrap' }}>
-        {p.status === 'PROPOSED' && (
+        {p.status === 'PROPOSED' && activeRole === 'DECIDER' && (
           <>
             <Btn variant="ok" disabled={busy || recomputing === 'pending'} onClick={onApprove}>批准</Btn>
             <Btn variant="danger" disabled={busy || recomputing === 'pending'} onClick={onReject}>驳回</Btn>
           </>
+        )}
+        {p.status === 'PROPOSED' && activeRole !== 'DECIDER' && (
+          <span style={{ color: 'var(--c-muted)', fontSize: 'var(--fs-2)' }}>
+            ⓘ 批准/驳回需切换到「决策者」角色
+          </span>
         )}
         <Btn disabled={busy || recomputing === 'pending'} onClick={onRecompute}>
           {recomputing === 'pending' ? '重算中…(~12s)' : '立即重算'}

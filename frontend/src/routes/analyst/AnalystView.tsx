@@ -50,9 +50,12 @@ export function AnalystView({ onOpenPrediction }: { onOpenPrediction?: (id: stri
       .catch(console.error)
   }, [])
 
+  // m5 UI 改进:列表只显示有"actionable"证据的 proposal
+  // 过滤规则:confidence > 0 (LLM 真给出非零评估,排除证据空 / 0 默认值)
+  const actionable = predictions.filter(p => p.confidenceNow > 0)
   const filtered = activeWatchlist === 'all'
-    ? predictions
-    : predictions.filter(p => p.sourceKind === 'WATCHLIST' && p.sourceId === activeWatchlist)
+    ? actionable
+    : actionable.filter(p => p.sourceKind === 'WATCHLIST' && p.sourceId === activeWatchlist)
 
   const kpiItems = [
     { label: '待批预测', value: predictions.filter(p => p.status === 'PROPOSED').length, sub: '待 A 决策者审' },
