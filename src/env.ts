@@ -61,6 +61,11 @@ const EnvSchema = z.object({
   AUTO_CANCEL_LAG_MINUTES: z.coerce.number().min(1).max(120).default(15),
   AUTO_CANCEL_NOTIFY: z.enum(['true', 'false']).default('true'),
 
+  // --- News-triage worker concurrency (Plan-E Task 8, G3) ---
+  // Caps in-flight LLM calls per worker process. Default 3 keeps dashscope
+  // bills predictable while still ahead of the typical INCR-fanout depth.
+  NEWS_TRIAGE_CONCURRENCY: z.coerce.number().min(1).max(10).default(3),
+
   // --- 阿里云 OSS (m3, EX-6) ---
   OSS_ADAPTER_KEY: z.enum(['mock', 'aliyun']).default('mock'),
   OSS_ENDPOINT: z.string().default('https://oss-cn-shenzhen.aliyuncs.com'),
