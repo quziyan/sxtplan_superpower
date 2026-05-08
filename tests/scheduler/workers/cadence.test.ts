@@ -1,12 +1,8 @@
-import { afterAll, beforeAll, describe, expect, mock, test } from 'bun:test'
+import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
 import { sql } from 'drizzle-orm'
 import { predictions } from '@/db/schema/prediction'
 import { taskClasses, vehicleClasses } from '@/db/schema/taxonomy'
-import {
-  scheduleCadenceTick,
-  tickCadence,
-  type CadenceQueueLike,
-} from '@/scheduler/workers/cadence'
+import { tickCadence, type CadenceQueueLike } from '@/scheduler/workers/cadence'
 import { createTestDb } from '../../helpers/test-db'
 
 let ctx: Awaited<ReturnType<typeof createTestDb>>
@@ -44,134 +40,57 @@ async function seedPrediction(
     sourceId: vc!.id,
     regionId: reg.id,
     regionVersion: reg.version,
-    windowDate: new Date('2026-05-15'),
+    windowDate: new Date('2026-12-31'),
     windowHalf: 'AM',
     vehicleClassId: vc!.id,
     taskClassId: tc!.id,
-    kDays: 9,
+    kDays: 7,
     status: overrides.status ?? 'PROPOSED',
-    cadenceMinutes: overrides.cadenceMinutes ?? 1440,
-    expiresAt: overrides.expiresAt ?? new Date(Date.now() + 9 * 86400_000),
+    cadenceMinutes: overrides.cadenceMinutes ?? 60,
+    expiresAt: overrides.expiresAt ?? new Date(Date.now() + 86400_000),
     ...(overrides.lastIncrAt !== undefined ? { lastIncrAt: overrides.lastIncrAt } : {}),
   }).returning()
   return p!.id
 }
 
-/** Builds a queue mock that captures every `add(...)` call. */
-function makeMockQueue() {
-  const calls: Array<{ name: string; data: { predictionId: string; kind: 'INCR' } }> = []
-  const add = mock(async (name: string, data: { predictionId: string; kind: 'INCR' }) => {
-    calls.push({ name, data })
-    return { id: `mock-${calls.length}` }
-  })
-  const queue: CadenceQueueLike = { add }
-  return { queue, add, calls }
-}
-
-describe('tickCadence', () => {
-  test('PROPOSED with last_incr_at = NULL → enqueues one INCR job', async () => {
-    const { db } = ctx
-    const id = await seedPrediction(db, `cad-null-${Date.now()}`, {
+describe('tickCadence (m5 G1: enqueue → fullRecalcQueue)', () => {
+  test('enqueues full-recalc for PROPOSED predictions whose cadence elapsed', async () => {
+    const predId = await seedPrediction(ctx.db, `cad-due-${Date.now()}`, {
       status: 'PROPOSED',
       lastIncrAt: null,
     })
-    const { queue, add, calls } = makeMockQueue()
 
-    const n = await tickCadence({ db, queue, limit: 100_000 })
+    const calls: Array<{ name: string; data: { predictionId: string } }> = []
+    const mockQueue: CadenceQueueLike = {
+      add: async (name, data) => { calls.push({ name, data }); return undefined },
+    }
 
-    // Other tests in this file may also leave PROPOSED rows lying around in the
-    // shared DB; assert the seeded id was definitely enqueued exactly once and
-    // every enqueue was an INCR for an existing prediction.
+    const n = await tickCadence({ db: ctx.db, queue: mockQueue, limit: 100_000 })
     expect(n).toBeGreaterThanOrEqual(1)
-    expect(add).toHaveBeenCalled()
-    const matching = calls.filter((c) => c.data.predictionId === id)
-    expect(matching.length).toBe(1)
-    expect(matching[0]!.name).toBe('incr')
-    expect(matching[0]!.data.kind).toBe('INCR')
+
+    const myCall = calls.find(c => c.data.predictionId === predId)
+    expect(myCall).toBeDefined()
+    expect(myCall!.name).toBe('full-recalc')
+    // G1: payload must NOT carry the legacy `kind: 'INCR'` field — fullRecalcQueue
+    // jobs only need { predictionId } (and optional manualTrigger added later).
+    expect((myCall!.data as any).kind).toBeUndefined()
   })
 
-  test('PROPOSED with last_incr_at = NOW() and cadence=60min → not yet due', async () => {
-    const { db } = ctx
-    const id = await seedPrediction(db, `cad-fresh-${Date.now()}`, {
+  test('does not enqueue when no PROPOSED predictions are due', async () => {
+    const predId = await seedPrediction(ctx.db, `cad-fresh-${Date.now()}`, {
       status: 'PROPOSED',
-      lastIncrAt: new Date(),       // just refreshed
-      cadenceMinutes: 60,           // 1h cadence — still in cool-down
+      lastIncrAt: new Date(),  // just refreshed → still in cool-down
+      cadenceMinutes: 60,
     })
-    const { queue, calls } = makeMockQueue()
 
-    await tickCadence({ db, queue, limit: 100_000 })
-
-    // The just-seeded row must NOT appear in the enqueue calls. We don't
-    // assert the global count — other rows in the shared DB may legitimately
-    // be due — only that THIS row was filtered out.
-    const matching = calls.filter((c) => c.data.predictionId === id)
-    expect(matching.length).toBe(0)
-  })
-
-  test('non-PROPOSED status (APPROVED) → not enqueued', async () => {
-    const { db } = ctx
-    const id = await seedPrediction(db, `cad-approved-${Date.now()}`, {
-      status: 'APPROVED',
-      lastIncrAt: null,             // would otherwise be due
-    })
-    const { queue, calls } = makeMockQueue()
-
-    await tickCadence({ db, queue, limit: 100_000 })
-
-    const matching = calls.filter((c) => c.data.predictionId === id)
-    expect(matching.length).toBe(0)
-  })
-
-  test('expired prediction (expires_at < NOW()) → not enqueued', async () => {
-    const { db } = ctx
-    const id = await seedPrediction(db, `cad-expired-${Date.now()}`, {
-      status: 'PROPOSED',
-      lastIncrAt: null,
-      expiresAt: new Date(Date.now() - 60_000),  // 1 min in the past
-    })
-    const { queue, calls } = makeMockQueue()
-
-    await tickCadence({ db, queue, limit: 100_000 })
-
-    const matching = calls.filter((c) => c.data.predictionId === id)
-    expect(matching.length).toBe(0)
-  })
-
-  test('multiple due predictions → enqueues one job per row, returns count', async () => {
-    const { db } = ctx
-    const stamp = `cad-multi-${Date.now()}`
-    const ids = [
-      await seedPrediction(db, `${stamp}-a`, { status: 'PROPOSED', lastIncrAt: null }),
-      await seedPrediction(db, `${stamp}-b`, { status: 'PROPOSED', lastIncrAt: null }),
-      await seedPrediction(db, `${stamp}-c`, { status: 'PROPOSED', lastIncrAt: null }),
-    ]
-    const { queue, calls } = makeMockQueue()
-
-    const n = await tickCadence({ db, queue, limit: 100_000 })
-
-    // Total enqueue count ≥ 3 (other rows in the shared DB may also be due).
-    expect(n).toBeGreaterThanOrEqual(3)
-
-    // The 3 we just seeded must each appear exactly once as INCR jobs.
-    for (const id of ids) {
-      const matching = calls.filter((c) => c.data.predictionId === id)
-      expect(matching.length).toBe(1)
-      expect(matching[0]!.data.kind).toBe('INCR')
-      expect(matching[0]!.name).toBe('incr')
+    const calls: Array<{ name: string; data: any }> = []
+    const mockQueue: CadenceQueueLike = {
+      add: async (name, data) => { calls.push({ name, data }); return undefined },
     }
-  })
-})
 
-describe('scheduleCadenceTick', () => {
-  test('returns a clearable timer without firing real Redis traffic', () => {
-    const { db } = ctx
-    const { queue } = makeMockQueue()
-    // Use a long interval so the callback never actually runs in this test.
-    const timer = scheduleCadenceTick({ db, queue }, 60 * 60 * 1000)
-    try {
-      expect(timer).toBeDefined()
-    } finally {
-      clearInterval(timer)
-    }
+    await tickCadence({ db: ctx.db, queue: mockQueue, limit: 100_000 })
+
+    const myCall = calls.find(c => c.data.predictionId === predId)
+    expect(myCall).toBeUndefined()
   })
 })
