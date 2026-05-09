@@ -9,6 +9,7 @@ import { resolveKeywords } from '@/news/keyword-derive'
 import { ingestHit } from '@/news/normalizer'
 import { getSearchAdapter } from '@/news/search-adapter'
 import type { SearchAdapter, SearchHit } from '@/news/types'
+import { getNewsFreshnessDays } from '@/modules/settings/service'
 
 /**
  * NewsIngest tick worker (Plan-E G2 + G4, m5).
@@ -73,6 +74,9 @@ export async function tickNewsIngest(
   const adapter: NewsIngestSearchAdapterLike =
     deps.searchAdapter ?? getSearchAdapter()
 
+  // 单 tick 内只读一次 setting,避免每个 watchlist 都 round-trip。
+  const freshnessDays = await getNewsFreshnessDays(deps.db)
+
   const activeWls = deps.onlyWatchlistId
     ? await deps.db
         .select()
@@ -116,14 +120,13 @@ export async function tickNewsIngest(
       const keywords = resolveKeywords(wl, vc, tc, region)
       if (keywords.length === 0) continue
 
-      const hits: SearchHit[] = await adapter.query(keywords)
+      const hits: SearchHit[] = await adapter.query(keywords, { freshnessDays })
       result.newsFetched += hits.length
 
       // 时间窗防御性过滤:Tavily server-side `days` 参数已经过滤过一遍,
       // 这里再做客户端 cutoff 兜底 — 处理 server 漏放/缓存命中老数据的情况。
       // 策略:hit.publishedAt 已知且早于 cutoff → 丢弃;null/undefined → 保留(graceful)。
-      const env = loadEnv()
-      const freshnessMs = env.NEWS_FRESHNESS_DAYS * 86_400_000
+      const freshnessMs = freshnessDays * 86_400_000
       const cutoff = Date.now() - freshnessMs
 
       for (const hit of hits) {

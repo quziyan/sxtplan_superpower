@@ -9,6 +9,7 @@ import { taskcardRoutes } from '@/modules/taskcard/routes'
 import { predictionRoutes } from '@/modules/prediction/routes'
 import { retrospectiveRoutes } from '@/modules/retrospective/routes'
 import { webhookRoutes } from '@/webhook/routes'
+import { settingsRoutes } from '@/modules/settings/routes'
 import { demoRoutes } from '@/__demo/routes'
 import { createDb } from '@/db/client'
 import { loadEnv } from '@/env'
@@ -81,6 +82,7 @@ app.route('/taskcards', taskcardRoutes(db))
 app.route('/predictions', predictionRoutes(db))
 app.route('/retrospectives', retrospectiveRoutes(db))
 app.route('/webhook', webhookRoutes(db))
+app.route('/settings', settingsRoutes(db))
 
 // Plan-C T37 / Slice 0 — customer demo helpers. Mounted only outside
 // production so a misconfigured prod deploy can't expose `/__demo/*`.

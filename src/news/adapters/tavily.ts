@@ -50,6 +50,9 @@ export class TavilySearchAdapter implements SearchAdapter {
     }
     this.callsInWindow++
 
+    // 时间窗优先级:opts.freshnessDays(运行时注入)> env.NEWS_FRESHNESS_DAYS(默认)
+    const days = opts.freshnessDays ?? env.NEWS_FRESHNESS_DAYS
+
     try {
       const res = await fetch('https://api.tavily.com/search', {
         method: 'POST',
@@ -59,10 +62,9 @@ export class TavilySearchAdapter implements SearchAdapter {
           query: q,
           search_depth: 'basic',
           max_results: 20,
-          // 时间窗:Tavily server-side 过滤,只返回最近 N 天发布的新闻。
-          // 配合 news-ingest 的 post-fetch 防御性过滤,确保证据时效性。
+          // Tavily server-side 过滤,只返回最近 days 天发布的新闻。
           topic: 'news',
-          days: env.NEWS_FRESHNESS_DAYS,
+          days,
         }),
         signal: AbortSignal.timeout(15000),
       })

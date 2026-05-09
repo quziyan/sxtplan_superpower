@@ -9,6 +9,11 @@ export type SearchHit = {
 export type SearchOpts = {
   count?: number
   freshness?: 'Day' | 'Week' | 'Month'
+  /**
+   * 显式覆盖时效窗口(天)。优先级:opts.freshnessDays > DB 设置 > env NEWS_FRESHNESS_DAYS。
+   * 用于运行时(news-ingest tick)注入每次拉取的窗口长度。
+   */
+  freshnessDays?: number
 }
 
 // Gov-site scraper kinds (Plan-D Task 12, A2-γ). Concrete subclasses (Tasks 13-15)

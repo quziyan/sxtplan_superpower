@@ -5,6 +5,7 @@ import { listWatchLists, type WatchList } from '@/lib/watchlist-api'
 import { listTaskCards, type TaskCard } from '@/lib/taskcard-api'
 import { listVehicleClasses, listTaskClasses, type VehicleClass, type TaskClass } from '@/lib/taxonomy-api'
 import { listRegions, type RegionListItem } from '@/lib/region-api'
+import { getNewsFreshnessDays, setNewsFreshnessDays } from '@/lib/settings-api'
 import { NewWatchListModal } from './NewWatchListModal'
 import { NewTaskCardModal } from './NewTaskCardModal'
 
@@ -19,6 +20,10 @@ export function AnalystView({ onOpenPrediction }: { onOpenPrediction?: (id: stri
   const [activeWatchlist, setActiveWatchlist] = useState<string>('all')
   const [newModalOpen, setNewModalOpen] = useState(false)
   const [taskCardModalOpen, setTaskCardModalOpen] = useState(false)
+  // 证据新闻时效窗口(天)。从后端 GET /settings/news-freshness-days 读;PUT 更新。
+  const [freshnessDays, setFreshnessDays] = useState<number | null>(null)
+  const [freshnessDraft, setFreshnessDraft] = useState<string>('')
+  const [freshnessSaving, setFreshnessSaving] = useState(false)
 
   // Refetch watchlists after a new one is created via the modal. Predictions
   // don't change when a watchlist is created (no signals attached yet) so we
@@ -51,7 +56,27 @@ export function AnalystView({ onOpenPrediction }: { onOpenPrediction?: (id: stri
         setRegionMap(new Map(rs.map(r => [r.id, r])))
       })
       .catch(console.error)
+    getNewsFreshnessDays()
+      .then(d => { setFreshnessDays(d); setFreshnessDraft(String(d)) })
+      .catch(console.error)
   }, [])
+
+  const onSaveFreshness = async () => {
+    const n = parseInt(freshnessDraft, 10)
+    if (!Number.isFinite(n) || n < 1 || n > 365) {
+      alert('时效窗口必须是 1-365 之间的整数(天)')
+      return
+    }
+    setFreshnessSaving(true)
+    try {
+      const r = await setNewsFreshnessDays(n)
+      setFreshnessDays(r.value)
+    } catch (e) {
+      alert((e as Error).message)
+    } finally {
+      setFreshnessSaving(false)
+    }
+  }
 
   // (β) m5 UI 对齐:list 已是 PROPOSED;前端只做 watchlist 侧栏过滤,不再二次过滤 confidence
   const filtered = activeWatchlist === 'all'
@@ -160,6 +185,31 @@ export function AnalystView({ onOpenPrediction }: { onOpenPrediction?: (id: stri
           title="分析师工作台"
           sub="监视新闻信号 → 审证据 → 调置信度 → 推送给决策者"
           actions={<>
+            <span style={{
+              display: 'inline-flex', alignItems: 'center', gap: 6,
+              padding: '4px 10px', borderRadius: 6,
+              background: 'var(--c-panel-2)', fontSize: 'var(--fs-2)', color: 'var(--c-muted)',
+            }}>
+              新闻时效:
+              <input
+                type="number" min={1} max={365}
+                value={freshnessDraft}
+                onChange={e => setFreshnessDraft(e.target.value)}
+                disabled={freshnessSaving || freshnessDays === null}
+                style={{
+                  width: 50, padding: '2px 6px', textAlign: 'right',
+                  background: 'transparent', border: '1px solid var(--c-border, #2a2f3a)',
+                  borderRadius: 4, color: 'inherit',
+                }}
+              />
+              天
+              <Btn
+                disabled={freshnessSaving || freshnessDays === null || freshnessDraft === String(freshnessDays)}
+                onClick={onSaveFreshness}
+              >
+                {freshnessSaving ? '保存中…' : '保存'}
+              </Btn>
+            </span>
             <Btn disabled><Icon name="refresh" size={12} />立即重算</Btn>
             <Btn variant="primary" onClick={() => setTaskCardModalOpen(true)}>
               <Icon name="plus" size={12} />新建任务卡

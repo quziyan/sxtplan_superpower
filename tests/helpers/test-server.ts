@@ -8,6 +8,7 @@ import { taskcardRoutes } from '@/modules/taskcard/routes'
 import { predictionRoutes } from '@/modules/prediction/routes'
 import { retrospectiveRoutes } from '@/modules/retrospective/routes'
 import { webhookRoutes } from '@/webhook/routes'
+import { settingsRoutes } from '@/modules/settings/routes'
 import { AppError } from '@/lib/errors'
 import { getOssAdapter } from '@/media/oss-adapter-pool'
 import type { Db } from '@/db/client'
@@ -52,5 +53,6 @@ export function buildTestApp(db: Db) {
   app.route('/predictions', predictionRoutes(db))
   app.route('/retrospectives', retrospectiveRoutes(db))
   app.route('/webhook', webhookRoutes(db))
+  app.route('/settings', settingsRoutes(db))
   return app
 }

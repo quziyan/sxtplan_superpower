@@ -9,6 +9,12 @@ function fmtCnTime(iso: string): string {
     hour: '2-digit', minute: '2-digit',
   })
 }
+// 仅日期(无时分)用于发布时间这种粗粒度展示
+function fmtCnDate(iso: string): string {
+  return new Date(iso).toLocaleDateString('zh-CN', {
+    timeZone: TZ, year: 'numeric', month: '2-digit', day: '2-digit',
+  })
+}
 
 const COLOR_NEW = '#22c55e'        // 绿:本次新增证据
 const COLOR_REUSE = '#94a3b8'      // 灰:已在过去推理出现过
@@ -104,7 +110,10 @@ export function EvidenceList({
                     {news.title}
                   </a>
                   <span style={{ color: 'var(--c-muted)', marginLeft: 'var(--sp-2)' }}>
-                    {news.sourceLabel}{news.publishedAt ? ` · ${fmtCnTime(news.publishedAt).slice(0, 10)}` : ''}
+                    {news.sourceLabel}
+                    {news.publishedAt
+                      ? ` · 发表 ${fmtCnDate(news.publishedAt)}`
+                      : ' · 发表时间未知'}
                   </span>
                 </div>
               ))}
@@ -139,6 +148,9 @@ export function EvidenceList({
               </a>
               <span style={{ color: 'var(--c-muted)', marginLeft: 'var(--sp-2)' }}>
                 {ev.news.sourceLabel}
+                {ev.news.publishedAt
+                  ? ` · 发表 ${fmtCnDate(ev.news.publishedAt)}`
+                  : ' · 发表时间未知'}
               </span>
             </div>
           ))}
