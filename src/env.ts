@@ -71,6 +71,13 @@ const EnvSchema = z.object({
   // against per-key search-API rate budgets. Lower bound 1m / upper 120m.
   NEWS_INGEST_INTERVAL_MIN: z.coerce.number().min(1).max(120).default(15),
 
+  // --- News freshness window (近 N 天)---
+  // 搜索时只取最近 N 天发布的新闻。Tavily 接受 `days` 参数 server-side
+  // 过滤;news-ingest 再做防御性 post-fetch 过滤(掉 publishedAt 已知且
+  // 早于窗口的命中)。null publishedAt 视为新鲜(graceful fallback)。
+  // 默认 30 天,可通过 .env 覆盖。
+  NEWS_FRESHNESS_DAYS: z.coerce.number().min(1).max(365).default(30),
+
   // --- 阿里云 OSS (m3, EX-6) ---
   OSS_ADAPTER_KEY: z.enum(['mock', 'aliyun']).default('mock'),
   OSS_ENDPOINT: z.string().default('https://oss-cn-shenzhen.aliyuncs.com'),

@@ -279,4 +279,57 @@ describe('tickNewsIngest', () => {
       await ctx.cleanup()
     }
   })
+
+  // 时效窗口防御性过滤:NEWS_FRESHNESS_DAYS=30 时,publishedAt 早于 30 天前的命中应被丢弃。
+  // null/undefined publishedAt 视为新鲜(graceful — 大量中文站缺失发布日期元数据)。
+  test('freshness filter: publishedAt 早于 NEWS_FRESHNESS_DAYS 的命中被丢弃', async () => {
+    const ctx = await createTestDb()
+    try {
+      await deactivateAllWatchlists(ctx.db)
+      const stamp = `fresh-${Date.now()}-${Math.floor(Math.random() * 1e9)}`
+      const seeded = await seedWatchlistAndPrediction(ctx.db, {
+        withKeywords: ['fresh-test-' + stamp],
+      })
+
+      const triageQ: NewsTriageQueueLike = { add: async () => undefined }
+
+      const now = Date.now()
+      const oneYearAgo = new Date(now - 365 * 86_400_000).toISOString()
+      const fiveDaysAgo = new Date(now - 5 * 86_400_000).toISOString()
+      const fakeAdapter = {
+        query: async () => [
+          // 早于 30 天 — 应丢
+          {
+            title: `${seeded.vName} 老新闻 ${stamp}`,
+            url: `https://stale.test/old?t=${stamp}`,
+            snippet: 'old', publishedAt: oneYearAgo,
+            source: { name: 'stale.test', kind: 'mainstream' as const },
+          },
+          // 5 天前 — 应留
+          {
+            title: `${seeded.vName} 新新闻 ${stamp}`,
+            url: `https://fresh.test/new?t=${stamp}`,
+            snippet: 'new', publishedAt: fiveDaysAgo,
+            source: { name: 'fresh.test', kind: 'mainstream' as const },
+          },
+          // 缺日期 — graceful 留(server-side `days` 过滤已经过一遍)
+          {
+            title: `${seeded.vName} 无日期 ${stamp}`,
+            url: `https://nopub.test/x?t=${stamp}`,
+            snippet: 'no date',
+            source: { name: 'nopub.test', kind: 'mainstream' as const },
+          },
+        ],
+      }
+
+      const r = await tickNewsIngest({
+        db: ctx.db, triageQueue: triageQ, searchAdapter: fakeAdapter,
+      })
+      // 3 fetched(adapter raw count),但只 2 应该被 insert(老的丢)
+      expect(r.newsFetched).toBe(3)
+      expect(r.newsInserted).toBe(2)
+    } finally {
+      await ctx.cleanup()
+    }
+  })
 })

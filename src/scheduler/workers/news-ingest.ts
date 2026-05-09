@@ -119,8 +119,19 @@ export async function tickNewsIngest(
       const hits: SearchHit[] = await adapter.query(keywords)
       result.newsFetched += hits.length
 
+      // 时间窗防御性过滤:Tavily server-side `days` 参数已经过滤过一遍,
+      // 这里再做客户端 cutoff 兜底 — 处理 server 漏放/缓存命中老数据的情况。
+      // 策略:hit.publishedAt 已知且早于 cutoff → 丢弃;null/undefined → 保留(graceful)。
+      const env = loadEnv()
+      const freshnessMs = env.NEWS_FRESHNESS_DAYS * 86_400_000
+      const cutoff = Date.now() - freshnessMs
+
       for (const hit of hits) {
         if (!hit.url || !hit.title) continue
+        if (hit.publishedAt) {
+          const ts = Date.parse(hit.publishedAt)
+          if (Number.isFinite(ts) && ts < cutoff) continue
+        }
         const { news, isNew } = await ingestHit(deps.db, hit)
         if (!isNew) continue // dup URL — already triaged on a prior tick
         result.newsInserted++
