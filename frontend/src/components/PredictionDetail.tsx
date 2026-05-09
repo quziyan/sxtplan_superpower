@@ -37,6 +37,8 @@ export function PredictionDetail({
   // m5 G5 UI 接通:点"立即重算"后,后端 enqueue 到 fullRecalcQueue。worker
   // 消费 ~10s 后写新 snapshot;UI 自动 12s 后 refetch + 提示状态。
   const [recomputing, setRecomputing] = useState<null | 'pending' | 'done' | 'error'>(null)
+  // 倒计时 secondsLeft:重算时从 12 起数到 0;driving live progress UI
+  const [recomputeSecondsLeft, setRecomputeSecondsLeft] = useState<number>(0)
   // m5 UI fix: V/T/region lookup maps,把 ID 显示成名字
   const [vMap, setVMap] = useState<Map<string, VehicleClass>>(new Map())
   const [tMap, setTMap] = useState<Map<string, TaskClass>>(new Map())
@@ -115,23 +117,45 @@ export function PredictionDetail({
   }
   const onRecompute = async () => {
     setRecomputing('pending')
+    setRecomputeSecondsLeft(12)
+    // 倒计时:每秒减 1,跑到 0 时进入 refetch + 完成判定
+    const tickStart = Date.now()
+    const tick = setInterval(() => {
+      const elapsed = Math.floor((Date.now() - tickStart) / 1000)
+      const left = Math.max(0, 12 - elapsed)
+      setRecomputeSecondsLeft(left)
+      if (left <= 0) clearInterval(tick)
+    }, 1000)
     try {
       await recomputeNow(p.id)
       // 后端 enqueue full-recalc + manualTrigger=true → P5 → refresh.FULL → LLM ~10s
       // 12s 后 refetch 一次,新 snapshot 应已写入
       setTimeout(async () => {
+        clearInterval(tick)
         try {
-          await refetch()
+          // 记录 refetch 前的 snapshot 数(closure 锁了 setTimeout 触发时刻的 React 状态)
+          const before = data?.snapshots.length ?? 0
+          // 一次 fetch 同时更新 UI 和拿到 after count
+          const fresh = await getPredictionDetail(p.id)
+          setData(fresh)
           // ISC-14:重算后 bubble 给父级 list 视图,这样 AnalystView/DecisionView 列表能拿到新置信度
           onMutated?.()
-          setRecomputing('done')
-          setTimeout(() => setRecomputing(null), 4000)
+          if (fresh.snapshots.length <= before) {
+            // 12s 内 LLM 没写新快照 — 提示用户再等
+            setRecomputing('error')
+            setError('LLM 较慢,12s 内未写入新快照,请稍后再点"立即重算"或刷新页面查看')
+            setTimeout(() => { setRecomputing(null); setError(null) }, 6000)
+          } else {
+            setRecomputing('done')
+            setTimeout(() => setRecomputing(null), 4000)
+          }
         } catch (e) {
           setError((e as Error).message)
           setRecomputing('error')
         }
       }, 12000)
     } catch (e) {
+      clearInterval(tick)
       setError((e as Error).message)
       setRecomputing('error')
     }
@@ -212,11 +236,29 @@ export function PredictionDetail({
           </span>
         )}
         <Btn disabled={busy || recomputing === 'pending'} onClick={onRecompute}>
-          {recomputing === 'pending' ? '重算中…(~12s)' : '立即重算'}
+          {recomputing === 'pending' ? `重算中… ${recomputeSecondsLeft}s` : '立即重算'}
         </Btn>
+        {recomputing === 'pending' && (
+          <span style={{
+            display: 'inline-flex', alignItems: 'center', gap: 6,
+            fontSize: 'var(--fs-2)', color: 'var(--c-muted)',
+          }}>
+            {recomputeSecondsLeft > 8 ? '① 抓取最新新闻'
+              : recomputeSecondsLeft > 3 ? '② LLM 评估证据'
+              : '③ 写入快照 + 刷新'}
+            <span style={{ fontFamily: 'monospace', color: 'var(--c-accent, #4ea1ff)' }}>
+              [{'█'.repeat(Math.max(0, 12 - recomputeSecondsLeft))}{'░'.repeat(recomputeSecondsLeft)}]
+            </span>
+          </span>
+        )}
         {recomputing === 'done' && (
           <span style={{ color: 'var(--c-good)', fontSize: 'var(--fs-2)' }}>
             ✓ 已刷新 — 时间线/置信度若有更新已显示
+          </span>
+        )}
+        {recomputing === 'error' && error && (
+          <span style={{ color: 'var(--c-warn, #fbbf24)', fontSize: 'var(--fs-2)' }}>
+            ⚠ {error}
           </span>
         )}
         {recomputing === 'error' && (

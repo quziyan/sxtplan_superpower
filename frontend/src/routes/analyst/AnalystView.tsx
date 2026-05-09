@@ -6,6 +6,7 @@ import { listTaskCards, type TaskCard } from '@/lib/taskcard-api'
 import { listVehicleClasses, listTaskClasses, type VehicleClass, type TaskClass } from '@/lib/taxonomy-api'
 import { listRegions, type RegionListItem } from '@/lib/region-api'
 import { getNewsFreshnessDays, setNewsFreshnessDays } from '@/lib/settings-api'
+import { recomputeNow } from '@/lib/prediction-api'
 import { NewWatchListModal } from './NewWatchListModal'
 import { NewTaskCardModal } from './NewTaskCardModal'
 
@@ -24,6 +25,11 @@ export function AnalystView({ onOpenPrediction }: { onOpenPrediction?: (id: stri
   const [freshnessDays, setFreshnessDays] = useState<number | null>(null)
   const [freshnessDraft, setFreshnessDraft] = useState<string>('')
   const [freshnessSaving, setFreshnessSaving] = useState(false)
+  // 批量重算进度。null = 空闲;{ done, total, currentId, failed } = 重算中。
+  const [batchProgress, setBatchProgress] = useState<
+    { done: number; total: number; currentId: string | null; failed: number; finished?: boolean }
+    | null
+  >(null)
 
   // Refetch watchlists after a new one is created via the modal. Predictions
   // don't change when a watchlist is created (no signals attached yet) so we
@@ -60,6 +66,39 @@ export function AnalystView({ onOpenPrediction }: { onOpenPrediction?: (id: stri
       .then(d => { setFreshnessDays(d); setFreshnessDraft(String(d)) })
       .catch(console.error)
   }, [])
+
+  // 批量重算:对当前 filter 后的 prediction 列表,逐条调 recomputeNow API,
+  // 串行不并发(避免 LLM 速率打爆),实时更新进度。失败的条数累计但继续推进。
+  // 全部完成后等 12s 让最后一条 LLM 算完,再 refetch 列表。
+  const onBatchRecompute = async () => {
+    if (filtered.length === 0 || batchProgress) return
+    if (filtered.length > 30) {
+      const ok = confirm(`将串行重算 ${filtered.length} 条 prediction,大约 ${Math.ceil(filtered.length * 0.5)} 分钟。继续?`)
+      if (!ok) return
+    }
+    const total = filtered.length
+    setBatchProgress({ done: 0, total, currentId: null, failed: 0 })
+    let failed = 0
+    for (let i = 0; i < filtered.length; i++) {
+      const p = filtered[i]!
+      setBatchProgress({ done: i, total, currentId: p.id, failed })
+      try {
+        await recomputeNow(p.id)
+      } catch (err) {
+        console.error(`[batch-recompute] ${p.id} failed:`, err)
+        failed++
+      }
+    }
+    setBatchProgress({ done: total, total, currentId: null, failed, finished: true })
+    // 给最后一条 LLM 12s 算完(P5 默认 ~10s),然后刷新列表
+    setTimeout(async () => {
+      try {
+        const fresh = await listPredictions({ status: 'PROPOSED', limit: 100, includeLatestSnapshot: true })
+        setPredictions(fresh)
+      } catch (e) { console.error(e) }
+      setTimeout(() => setBatchProgress(null), 4000)
+    }, 12_000)
+  }
 
   const onSaveFreshness = async () => {
     const n = parseInt(freshnessDraft, 10)
@@ -210,13 +249,52 @@ export function AnalystView({ onOpenPrediction }: { onOpenPrediction?: (id: stri
                 {freshnessSaving ? '保存中…' : '保存'}
               </Btn>
             </span>
-            <Btn disabled><Icon name="refresh" size={12} />立即重算</Btn>
+            <Btn
+              disabled={batchProgress !== null && !batchProgress.finished || filtered.length === 0}
+              onClick={onBatchRecompute}
+            >
+              <Icon name="refresh" size={12} />立即重算{filtered.length > 0 ? ` (${filtered.length})` : ''}
+            </Btn>
             <Btn variant="primary" onClick={() => setTaskCardModalOpen(true)}>
               <Icon name="plus" size={12} />新建任务卡
             </Btn>
           </>}
         />
         <div className="workspace__body">
+          {batchProgress && (
+            <div style={{
+              marginBottom: 'var(--sp-4)', padding: 'var(--sp-3) var(--sp-4)',
+              background: 'var(--c-panel-2)', borderRadius: 6,
+              border: '1px solid var(--c-border, #2a2f3a)',
+              display: 'flex', alignItems: 'center', gap: 'var(--sp-3)',
+            }}>
+              <span style={{ fontSize: 'var(--fs-3)', fontWeight: 600 }}>
+                {batchProgress.finished
+                  ? '⌛ 已批量提交,等待 LLM 完成…'
+                  : `🔄 批量重算中 ${batchProgress.done}/${batchProgress.total}`}
+              </span>
+              <div style={{
+                flex: 1, height: 6, background: 'var(--c-border, #2a2f3a)', borderRadius: 3, overflow: 'hidden',
+              }}>
+                <div style={{
+                  width: `${(batchProgress.done / Math.max(1, batchProgress.total)) * 100}%`,
+                  height: '100%',
+                  background: batchProgress.failed > 0 ? 'var(--c-warn, #fbbf24)' : 'var(--c-accent, #4ea1ff)',
+                  transition: 'width 200ms ease',
+                }} />
+              </div>
+              {batchProgress.currentId && (
+                <span style={{ fontSize: 'var(--fs-2)', color: 'var(--c-muted)', fontFamily: 'monospace' }}>
+                  当前 [{batchProgress.currentId.slice(0, 8)}]
+                </span>
+              )}
+              {batchProgress.failed > 0 && (
+                <span style={{ fontSize: 'var(--fs-2)', color: 'var(--c-warn, #fbbf24)' }}>
+                  ⚠ 失败 {batchProgress.failed}
+                </span>
+              )}
+            </div>
+          )}
           <div style={{ marginBottom: 'var(--sp-5)' }}>
             <KpiRow items={kpiItems} />
           </div>
