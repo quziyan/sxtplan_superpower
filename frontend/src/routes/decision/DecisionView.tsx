@@ -39,7 +39,8 @@ export function DecisionView({ onOpenPrediction }: { onOpenPrediction?: (id: str
     try {
       // Plan-C T33: opt into inline latest snapshot so InboxCard can render
       // the reasoning snippet without a per-row /predictions/:id fetch.
-      setItems(await listPredictions({ status: 'PROPOSED', limit: 50, includeLatestSnapshot: true }))
+      // (β) m5 UI 对齐:决策者工作台只看分析师推送过来的 VALIDATED,不再混入未审的 PROPOSED
+      setItems(await listPredictions({ status: 'VALIDATED', limit: 50, includeLatestSnapshot: true }))
     }
     catch (e) { setError((e as Error).message) }
     finally { setLoading(false) }
@@ -77,7 +78,7 @@ export function DecisionView({ onOpenPrediction }: { onOpenPrediction?: (id: str
     <main className="workspace">
       <PageHeader
         title="决策者工作台"
-        sub={`待批预测 ${items.length} 条 · 一键批/驳`}
+        sub={`分析师已推送 ${items.length} 条 · 一键批/驳`}
       />
       <div className="workspace__body">
         {error && <div style={{ color: 'var(--c-bad)', marginBottom: 'var(--sp-3)' }}>{error}</div>}
@@ -85,7 +86,7 @@ export function DecisionView({ onOpenPrediction }: { onOpenPrediction?: (id: str
         {!loading && inboxItems.length === 0 && (
           <div className="empty" style={{ marginTop: 'var(--sp-7)' }}>
             <div style={{ fontSize: 14, marginBottom: 8 }}>📥 当前无待批预测</div>
-            <div>分析师推送预测后,这里会显示卡片列表。</div>
+            <div>分析师在工作台审完后会点「推送给决策者」,这里会出现卡片。</div>
           </div>
         )}
         <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sp-3)' }}>

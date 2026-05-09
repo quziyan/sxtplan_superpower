@@ -2,7 +2,7 @@ import { sql } from 'drizzle-orm'
 import { boolean, check, index, integer, jsonb, pgEnum, pgTable, text, timestamp, uuid } from 'drizzle-orm/pg-core'
 
 export const predictionStatusEnum = pgEnum('prediction_status', [
-  'PROPOSED', 'APPROVED', 'REJECTED', 'DISPATCHED', 'EXPIRED', 'COMPLETED',
+  'PROPOSED', 'VALIDATED', 'APPROVED', 'REJECTED', 'DISPATCHED', 'EXPIRED', 'COMPLETED',
 ])
 
 export const predictionSourceEnum = pgEnum('prediction_source', ['WATCHLIST', 'TASKCARD'])

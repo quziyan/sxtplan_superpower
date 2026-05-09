@@ -380,6 +380,107 @@ describe('prediction routes', () => {
     expect(body.ok).toBe(true)
     expect(body.prediction.status).toBe('REJECTED')
   })
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // (β) m5 UI 对齐:VALIDATED 工作流门控
+  // 状态机:PROPOSED → VALIDATED (ANALYST 推送) → APPROVED/REJECTED (DECIDER)
+  //         BC: PROPOSED → APPROVED/REJECTED 仍允许
+  // ─────────────────────────────────────────────────────────────────────────
+  async function seedValidatePrediction(slug: string): Promise<string> {
+    const stamp = `${slug}-${Date.now()}`
+    const reg = (await ctx.db.execute<{ id: string; version: number }>(sql`
+      INSERT INTO regions (kind, name, version, geom)
+      VALUES ('AD_HOC', ${'val-region-' + stamp}, 1, ST_GeomFromGeoJSON(${JSON.stringify(poly)}))
+      RETURNING id, version
+    `))[0]!
+    const [vc] = await ctx.db.insert(vehicleClasses).values({ name: `vc-${stamp}`, level: 1 }).returning()
+    const [tc] = await ctx.db.insert(taskClasses).values({ name: `tc-${stamp}`, level: 1 }).returning()
+    const [p] = await ctx.db.insert(predictions).values({
+      sourceKind: 'WATCHLIST', sourceId: vc!.id,
+      regionId: reg.id, regionVersion: reg.version,
+      windowDate: new Date('2026-08-15'), windowHalf: 'AM',
+      vehicleClassId: vc!.id, taskClassId: tc!.id,
+      kDays: 7, expiresAt: new Date(Date.now() + 7 * 86400_000),
+    }).returning()
+    return p!.id
+  }
+
+  test('POST /predictions/:id/validate requires ANALYST role (DECIDER → 401)', async () => {
+    const id = await seedValidatePrediction('val-decider-denied')
+    const res = await app.request(`/predictions/${id}/validate`, {
+      method: 'POST',
+      headers: { cookie: deciderCookie },
+    })
+    expect(res.status).toBe(401)
+  })
+
+  test('POST /predictions/:id/validate as ANALYST transitions PROPOSED → VALIDATED', async () => {
+    const id = await seedValidatePrediction('val-analyst-ok')
+    const res = await app.request(`/predictions/${id}/validate`, {
+      method: 'POST',
+      headers: { cookie: analystCookie },
+    })
+    expect(res.status).toBe(200)
+    const body = await res.json() as { ok: boolean; prediction: { status: string } }
+    expect(body.ok).toBe(true)
+    expect(body.prediction.status).toBe('VALIDATED')
+  })
+
+  test('POST /predictions/:id/validate writes audit row with action=validate', async () => {
+    const id = await seedValidatePrediction('val-audit')
+    await app.request(`/predictions/${id}/validate`, {
+      method: 'POST', headers: { cookie: analystCookie },
+    })
+    const audits = await ctx.db.select().from(operationAudit)
+      .where(and(
+        eq(operationAudit.targetId, id),
+        eq(operationAudit.action, 'validate'),
+      ))
+      .orderBy(desc(operationAudit.occurredAt))
+    expect(audits.length).toBeGreaterThanOrEqual(1)
+    expect(audits[0]!.targetKind).toBe('prediction')
+  })
+
+  test('POST /predictions/:id/validate already-VALIDATED → 500 (not PROPOSED)', async () => {
+    const id = await seedValidatePrediction('val-twice')
+    await app.request(`/predictions/${id}/validate`, {
+      method: 'POST', headers: { cookie: analystCookie },
+    })
+    const res = await app.request(`/predictions/${id}/validate`, {
+      method: 'POST', headers: { cookie: analystCookie },
+    })
+    expect(res.status).toBe(500)
+  })
+
+  test('VALIDATED → APPROVED transition (DECIDER approve on a pushed prediction)', async () => {
+    const id = await seedValidatePrediction('val-then-approve')
+    // analyst pushes
+    await app.request(`/predictions/${id}/validate`, {
+      method: 'POST', headers: { cookie: analystCookie },
+    })
+    // decider approves the now-VALIDATED row
+    const res = await app.request(`/predictions/${id}/approve`, {
+      method: 'POST', headers: { cookie: deciderCookie },
+    })
+    expect(res.status).toBe(200)
+    const body = await res.json() as { prediction: { status: string } }
+    expect(body.prediction.status).toBe('APPROVED')
+  })
+
+  test('VALIDATED → REJECTED transition (DECIDER reject on a pushed prediction)', async () => {
+    const id = await seedValidatePrediction('val-then-reject')
+    await app.request(`/predictions/${id}/validate`, {
+      method: 'POST', headers: { cookie: analystCookie },
+    })
+    const res = await app.request(`/predictions/${id}/reject`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', cookie: deciderCookie },
+      body: JSON.stringify({ reason: 'decider 复核驳回' }),
+    })
+    expect(res.status).toBe(200)
+    const body = await res.json() as { prediction: { status: string } }
+    expect(body.prediction.status).toBe('REJECTED')
+  })
 })
 
 /**

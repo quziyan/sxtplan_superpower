@@ -199,14 +199,32 @@ export async function getNewsEvidence(db: Db, predictionId: string): Promise<New
 
 export type StatusTransition = {
   predictionId: string
-  to: 'APPROVED' | 'REJECTED'
+  to: 'VALIDATED' | 'APPROVED' | 'REJECTED'
+}
+
+// 状态机:
+//   PROPOSED → VALIDATED   (ANALYST 推送给决策者)
+//   PROPOSED → APPROVED    (BC: 决策者直接批准未推送提案)
+//   PROPOSED → REJECTED    (BC: 决策者直接驳回未推送提案)
+//   VALIDATED → APPROVED   (决策者批准已推送提案)
+//   VALIDATED → REJECTED   (决策者驳回已推送提案)
+const ALLOWED_SOURCES: Record<StatusTransition['to'], ReadonlyArray<'PROPOSED' | 'VALIDATED'>> = {
+  VALIDATED: ['PROPOSED'],
+  APPROVED: ['PROPOSED', 'VALIDATED'],
+  REJECTED: ['PROPOSED', 'VALIDATED'],
 }
 
 export async function transitionStatus(db: Db, t: StatusTransition): Promise<Prediction> {
+  const sources = ALLOWED_SOURCES[t.to]
   const [row] = await db.update(predictions)
     .set({ status: t.to, updatedAt: new Date() })
-    .where(and(eq(predictions.id, t.predictionId), eq(predictions.status, 'PROPOSED')))
+    .where(and(
+      eq(predictions.id, t.predictionId),
+      inArray(predictions.status, sources as unknown as Prediction['status'][]),
+    ))
     .returning()
-  if (!row) throw new Error(`prediction ${t.predictionId} not in PROPOSED state or not found`)
+  if (!row) {
+    throw new Error(`prediction ${t.predictionId} not in {${sources.join(',')}} or not found`)
+  }
   return row
 }

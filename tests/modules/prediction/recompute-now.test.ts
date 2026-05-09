@@ -120,7 +120,11 @@ describe('POST /predictions/:id/recompute-now — dual mode (Plan-E G5)', () => 
       ))
       .orderBy(desc(operationAudit.occurredAt))
     expect(audits.length).toBeGreaterThanOrEqual(1)
-    expect(audits[0]!.reason).toBe('FULL P5 manual trigger')
+    // 自 cbe6f2e:recompute-now 对 WATCHLIST 来源 prediction 也跑 scoped newsIngest,
+    // 审计 reason 后追加 (fetched=N, inserted=N, triaged=N) 计数;非 WATCHLIST 维持原 reason
+    expect(audits[0]!.reason).toMatch(
+      /^FULL P5 manual( \+ scoped newsIngest \(fetched=\d+, inserted=\d+, triaged=\d+\))?( trigger)?$/,
+    )
   })
 
   test('INCR mode with newEvidenceNewsIds → enqueues refresh INCR + audit', async () => {

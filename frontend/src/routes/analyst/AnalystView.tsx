@@ -34,8 +34,10 @@ export function AnalystView({ onOpenPrediction }: { onOpenPrediction?: (id: stri
   }
 
   useEffect(() => {
-    // m5 UI: hasEvidence=true 让后端过滤无证据 prediction(分析师只看 actionable 提案)
-    Promise.all([listWatchLists(), listTaskCards(), listPredictions({ limit: 100, hasEvidence: true })])
+    // (β) m5 UI 对齐:分析师工作台只看 PROPOSED — 待我审完后推送给决策者(VALIDATED)。
+    // 拿 latestSnapshot 让 KPI/表格能区分已运行 LLM 和零置信度待评估的提案。
+    Promise.all([listWatchLists(), listTaskCards(),
+      listPredictions({ status: 'PROPOSED', limit: 100, includeLatestSnapshot: true })])
       .then(([wls, tcs, ps]) => { setWatchlists(wls); setTaskcards(tcs); setPredictions(ps) })
       .catch(console.error)
       .finally(() => setLoading(false))
@@ -51,18 +53,17 @@ export function AnalystView({ onOpenPrediction }: { onOpenPrediction?: (id: stri
       .catch(console.error)
   }, [])
 
-  // m5 UI 改进:列表只显示有"actionable"证据的 proposal
-  // 过滤规则:confidence > 0 (LLM 真给出非零评估,排除证据空 / 0 默认值)
-  const actionable = predictions.filter(p => p.confidenceNow > 0)
+  // (β) m5 UI 对齐:list 已是 PROPOSED;前端只做 watchlist 侧栏过滤,不再二次过滤 confidence
   const filtered = activeWatchlist === 'all'
-    ? actionable
-    : actionable.filter(p => p.sourceKind === 'WATCHLIST' && p.sourceId === activeWatchlist)
+    ? predictions
+    : predictions.filter(p => p.sourceKind === 'WATCHLIST' && p.sourceId === activeWatchlist)
 
+  // KPI 围绕"待我推送"的工作流:总待审 / 已评 / 建议优先 / 0 置信
   const kpiItems = [
-    { label: '待批预测', value: predictions.filter(p => p.status === 'PROPOSED').length, sub: '待 A 决策者审' },
-    { label: '已批准', value: predictions.filter(p => p.status === 'APPROVED').length, sub: '等待调度' },
-    { label: '已调度', value: predictions.filter(p => p.status === 'DISPATCHED').length, sub: '执行中' },
-    { label: '已完成', value: predictions.filter(p => p.status === 'COMPLETED').length, sub: '历史复盘' },
+    { label: '待审', value: predictions.length, sub: 'PROPOSED — 待我推送' },
+    { label: 'LLM 已评', value: predictions.filter(p => p.confidenceNow > 0).length, sub: '已跑过 triage' },
+    { label: '高置信', value: predictions.filter(p => p.confidenceNow >= 70).length, sub: '建议优先推送' },
+    { label: '0 置信', value: predictions.filter(p => p.confidenceNow === 0).length, sub: '尚未运行 LLM' },
   ]
 
   const tableRows = filtered.map(p => ({

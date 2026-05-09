@@ -152,6 +152,24 @@ export function predictionRoutes(db: Db, deps: PredictionRouteDeps = {}) {
     return c.json({ ok: true, prediction: after })
   })
 
+  // (β) m5 UI 对齐:ANALYST 把 PROPOSED 推送到 VALIDATED,DECIDER 工作台只看 VALIDATED。
+  // 状态机 PROPOSED → VALIDATED;BC 保留 PROPOSED → APPROVED/REJECTED 路径。
+  app.post('/:id/validate', authRequired(db), roleRequired('ANALYST'), async (c) => {
+    const auth = c.get('auth')
+    const id = c.req.param('id')
+    const before = await getPrediction(db, id)
+    if (!before) throw NotFound(`prediction ${id} not found`)
+    const after = await transitionStatus(db, { predictionId: id, to: 'VALIDATED' })
+    const validateEntry: import('@/audit/log').AuditEntry = {
+      actorUserId: auth.user.id,
+      targetKind: 'prediction', targetId: id, action: 'validate',
+      before: { status: before.status }, after: { status: after.status },
+    }
+    if (auth.activeRoleKey !== null) validateEntry.actorRoleKey = auth.activeRoleKey
+    await logAudit(db, validateEntry)
+    return c.json({ ok: true, prediction: after })
+  })
+
   app.post('/:id/manual-confidence', authRequired(db), roleRequired('ANALYST'), zValidator('json', manualConfSchema), async (c) => {
     const auth = c.get('auth')
     const id = c.req.param('id')

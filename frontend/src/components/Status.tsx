@@ -1,7 +1,8 @@
-export type PredictionStatus = 'PROPOSED' | 'APPROVED' | 'REJECTED' | 'DISPATCHED' | 'COMPLETED' | 'EXPIRED'
+export type PredictionStatus = 'PROPOSED' | 'VALIDATED' | 'APPROVED' | 'REJECTED' | 'DISPATCHED' | 'COMPLETED' | 'EXPIRED'
 
 const LABELS: Record<PredictionStatus, string> = {
-  PROPOSED: '待批',
+  PROPOSED: '待审',
+  VALIDATED: '已推送',
   APPROVED: '已批准',
   REJECTED: '已驳回',
   DISPATCHED: '已调度',

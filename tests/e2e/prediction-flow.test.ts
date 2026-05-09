@@ -134,10 +134,12 @@ describe('m2 prediction flow E2E', () => {
     expect(dispatch.adapterKey).toBe('mock')
     expect(dispatch.externalId).toMatch(/^mock-/)
 
-    // 7. Verify dispatch_tasks row exists
+    // 7. Verify dispatch_tasks row exists.
+    // Plan-C T16+:approve 路由本身就会 triggerDispatch,所以批准后已有 1 条;
+    // 加上 step 6 显式 enqueueDispatch 又写入 1 条 — 总计 2 条。
     const dispatchCount = await ctx.db.execute<{ n: number }>(sql`
       SELECT COUNT(*)::int AS n FROM dispatch_tasks WHERE prediction_id = ${predictionId}::uuid
     `)
-    expect((dispatchCount[0] as { n: number }).n).toBe(1)
+    expect((dispatchCount[0] as { n: number }).n).toBe(2)
   })
 })

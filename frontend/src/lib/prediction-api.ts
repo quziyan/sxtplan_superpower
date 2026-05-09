@@ -2,7 +2,7 @@ import { api } from './api'
 import type { DispatchTask } from './dispatch-api'
 import type { MediaAsset } from './media-api'
 
-export type PredictionStatus = 'PROPOSED' | 'APPROVED' | 'REJECTED' | 'DISPATCHED' | 'EXPIRED' | 'COMPLETED'
+export type PredictionStatus = 'PROPOSED' | 'VALIDATED' | 'APPROVED' | 'REJECTED' | 'DISPATCHED' | 'EXPIRED' | 'COMPLETED'
 export type HalfDay = 'AM' | 'PM'
 
 // Plan-C T27 / ISC-35: GET /predictions/:id inlines dispatchTasks (with
@@ -119,6 +119,11 @@ export async function getPredictionDetail(id: string): Promise<PredictionDetailR
 
 export async function approvePrediction(id: string): Promise<{ ok: boolean; prediction: Prediction }> {
   return api<{ ok: boolean; prediction: Prediction }>(`/predictions/${id}/approve`, { method: 'POST', body: '{}' })
+}
+
+// (β) m5 UI 对齐:ANALYST 推送 PROPOSED → VALIDATED,DECIDER 工作台仅看 VALIDATED
+export async function validatePrediction(id: string): Promise<{ ok: boolean; prediction: Prediction }> {
+  return api<{ ok: boolean; prediction: Prediction }>(`/predictions/${id}/validate`, { method: 'POST', body: '{}' })
 }
 
 export async function rejectPrediction(id: string, reason?: string): Promise<{ ok: boolean; prediction: Prediction }> {

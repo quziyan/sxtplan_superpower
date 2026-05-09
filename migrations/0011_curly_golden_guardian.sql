@@ -1,0 +1,1 @@
+ALTER TYPE "public"."prediction_status" ADD VALUE 'VALIDATED' BEFORE 'APPROVED';

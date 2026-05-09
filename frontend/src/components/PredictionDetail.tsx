@@ -7,6 +7,7 @@ import { ConfBar } from './ConfBar'
 import { Btn } from './Btn'
 import {
   approvePrediction,
+  validatePrediction,
   getPredictionDetail,
   recomputeNow,
   rejectPrediction,
@@ -99,6 +100,19 @@ export function PredictionDetail({
       setBusy(false)
     }
   }
+  // (β) m5 UI:ANALYST 推送 PROPOSED → VALIDATED,DECIDER 工作台才会看见
+  const onValidate = async () => {
+    setBusy(true)
+    try {
+      await validatePrediction(p.id)
+      await refetch()
+      onMutated?.()
+    } catch (e) {
+      setError((e as Error).message)
+    } finally {
+      setBusy(false)
+    }
+  }
   const onRecompute = async () => {
     setRecomputing('pending')
     try {
@@ -108,6 +122,8 @@ export function PredictionDetail({
       setTimeout(async () => {
         try {
           await refetch()
+          // ISC-14:重算后 bubble 给父级 list 视图,这样 AnalystView/DecisionView 列表能拿到新置信度
+          onMutated?.()
           setRecomputing('done')
           setTimeout(() => setRecomputing(null), 4000)
         } catch (e) {
@@ -178,13 +194,19 @@ export function PredictionDetail({
         <DispatchPanel dispatches={data.dispatchTasks} onMutated={handleMutation} />
       </section>
       <section style={{ display: 'flex', gap: 'var(--sp-2)', alignItems: 'center', flexWrap: 'wrap' }}>
-        {p.status === 'PROPOSED' && activeRole === 'DECIDER' && (
+        {/* (β) m5 UI:ANALYST 在 PROPOSED 上推送给决策者;DECIDER 在 VALIDATED 上批准/驳回 */}
+        {p.status === 'PROPOSED' && activeRole === 'ANALYST' && (
+          <Btn variant="primary" disabled={busy || recomputing === 'pending'} onClick={onValidate}>
+            ✈︎ 推送给决策者
+          </Btn>
+        )}
+        {(p.status === 'PROPOSED' || p.status === 'VALIDATED') && activeRole === 'DECIDER' && (
           <>
             <Btn variant="ok" disabled={busy || recomputing === 'pending'} onClick={onApprove}>批准</Btn>
             <Btn variant="danger" disabled={busy || recomputing === 'pending'} onClick={onReject}>驳回</Btn>
           </>
         )}
-        {p.status === 'PROPOSED' && activeRole !== 'DECIDER' && (
+        {p.status === 'PROPOSED' && activeRole !== 'DECIDER' && activeRole !== 'ANALYST' && (
           <span style={{ color: 'var(--c-muted)', fontSize: 'var(--fs-2)' }}>
             ⓘ 批准/驳回需切换到「决策者」角色
           </span>

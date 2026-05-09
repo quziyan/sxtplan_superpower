@@ -333,6 +333,7 @@
 }
 .status::before { content: ''; width: 5px; height: 5px; border-radius: 50%; background: currentColor; }
 .status--proposed   { color: #b0c0d8; background: rgba(176,192,216,0.10); }
+.status--validated  { color: var(--c-accent); background: var(--c-accent-soft, rgba(78,161,255,0.12)); }
 .status--approved   { color: var(--c-info); background: var(--c-info-soft); }
 .status--rejected   { color: var(--c-text-3); background: var(--c-panel-2); }
 .status--dispatched { color: var(--c-warn); background: var(--c-warn-soft); }
