@@ -290,6 +290,16 @@ updated: 2026-05-05T19:30:00Z
   - 经济活跃 + 新闻量大 → F1 数据信号充足
   - 架构泛化保留，后续滚动接入其他省走部署不走开发
 - **2026-05-05 19:30** — **OBSERVE 阶段闭合**：50 ISC，10 Features，E3 完整性自检：Problem ✅ Vision ✅ Out of Scope ✅ Principles ✅ Constraints ✅ Goal ✅ Criteria ✅ Test Strategy ✅(部分) Features ✅ Decisions ✅。Changelog/Verification 留待 LEARN/VERIFY 阶段。剩余 `[需补充]` 占位符 7 处，全部为非阻塞性参数（具体数字阈值），可在 PLAN 中由设计决策或在 BUILD 中由实测落定。
+- **2026-05-09 02:30** — **m5 UI 工作流门控 (β) 落地** (commit `07da772`)。
+  - **背景**：m5 主线发现两视图筛选不对称——AnalystView 用 `hasEvidence` 过滤到 178 条，DecisionView 不过滤导致 15,399 条 PROPOSED 全显示，决策者收件箱被未审记录灌爆。
+  - **三选一**：(α) 双视图同 filter / (β) 加 VALIDATED 状态机门控 / (γ) 阈值自动推送。用户选 (β)——业务正解，与"分析师审完推送给决策者"流程对齐。
+  - **状态机扩展**：`prediction_status` enum 新增 `VALIDATED`（位置 PROPOSED 与 APPROVED 之间），`transitionStatus` ALLOWED_SOURCES 表化：PROPOSED→VALIDATED (ANALYST 推送)、PROPOSED→APPROVED|REJECTED (BC)、VALIDATED→APPROVED|REJECTED (DECIDER 复核)。
+  - **路由**：`POST /predictions/:id/validate` 仅 `ANALYST`，审计 `action='validate'`。AnalystView list 改 `status=PROPOSED`，DecisionView list 改 `status=VALIDATED`，PredictionDetail 新增「✈︎ 推送给决策者」按钮，活角色 ANALYST + 状态 PROPOSED 时显示。
+  - **Bonus**：recompute-now 12s setTimeout 内补 `onMutated?.()` bubble，立即重算后父级列表能刷新（修了之前用户报告的"重算不刷新"问题）。
+  - **migration**：`migrations/0011_curly_golden_guardian.sql` 一行 `ALTER TYPE ... ADD VALUE 'VALIDATED' BEFORE 'APPROVED'`。**结构性变更，无数据 backfill**——已有 224 条带证据的 PROPOSED 维持原状，分析师手动推送（用户明确选择，而非 γ 自动）。
+  - **测试基线**：从 407/2/2 → 415/0/2，新增 6 个 (β) 测试，顺手修了两个预存的 stale 测试 (cbe6f2e 后未更新)。`bunx tsc --noEmit` 前后端均零错误。
+  - **Forge dispatch 教训**：先用 `Agent(subagent_type=Forge)` 派发完整 vertical slice，但 Forge 走 codex CLI 时 945s 内未落盘任何文件，最终接管手工实施。下次类似 well-specified diff 直接手工实施会更快——Forge 适合需要 GPT-5.4 推理的复杂决策，不是大量小心剧本。
+- **2026-05-09 02:30** — Algorithm conversation-context override 第二次触发：classifier 对裸"(β)"判 MINIMAL，但上下文清楚是批准多文件 E3 重构。按 v6.3.0 § Mode Classification 规则升级到 ALGORITHM E3 并在 Decisions 留档。
 
 ## Changelog
 
