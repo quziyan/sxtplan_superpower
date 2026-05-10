@@ -44,7 +44,8 @@ export function predictionRoutes(db: Db, deps: PredictionRouteDeps = {}) {
   app.get('/', authRequired(db), async (c) => {
     const status = c.req.query('status')
     const limitParam = c.req.query('limit')
-    const limit = limitParam ? Number.parseInt(limitParam, 10) : undefined
+    // Schedule tab: limit cap 500(月视图可能需要)
+    const limit = limitParam ? Math.min(Number.parseInt(limitParam, 10), 500) : undefined
     // Plan-C T33 / ISC-41: opt-in `?include=latest_snapshot` — default off
     // so existing callers (and the prior 304-test contract) stay unchanged.
     // Comma-separated tokens for forward-compat (future: ?include=foo,bar).
@@ -53,11 +54,22 @@ export function predictionRoutes(db: Db, deps: PredictionRouteDeps = {}) {
     const includeLatestSnapshot = includeTokens.includes('latest_snapshot')
     // m5 UI:?has_evidence=true 只返回有证据的 prediction
     const hasEvidence = c.req.query('has_evidence') === 'true'
+    // Schedule tab:?from=YYYY-MM-DD&to=YYYY-MM-DD 过滤 windowDate
+    const fromRaw = c.req.query('from')
+    const toRaw = c.req.query('to')
+    if (fromRaw && !/^\d{4}-\d{2}-\d{2}$/.test(fromRaw)) {
+      throw BadRequest(`from must be YYYY-MM-DD, got ${fromRaw}`)
+    }
+    if (toRaw && !/^\d{4}-\d{2}-\d{2}$/.test(toRaw)) {
+      throw BadRequest(`to must be YYYY-MM-DD, got ${toRaw}`)
+    }
     return c.json(await listPredictions(db, {
       ...(status ? { status: status as any } : {}),
       ...(limit ? { limit } : {}),
       ...(includeLatestSnapshot ? { includeLatestSnapshot: true } : {}),
       ...(hasEvidence ? { hasEvidence: true } : {}),
+      ...(fromRaw ? { from: fromRaw } : {}),
+      ...(toRaw ? { to: toRaw } : {}),
     }))
   })
 

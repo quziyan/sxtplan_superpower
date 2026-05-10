@@ -175,6 +175,93 @@ describe('prediction routes', () => {
     expect(withoutSnaps).toBeDefined()
   })
 
+  // Schedule tab: GET /predictions accepts ?from=&to= for windowDate range
+  // filtering. Both bounds inclusive. Invalid date format → 400. Both
+  // unset = unchanged behavior (covered by earlier tests).
+  test('GET /predictions?from=&to= filters by windowDate range', async () => {
+    const stamp = `range-${Date.now()}`
+    const reg = (await ctx.db.execute<{ id: string; version: number }>(sql`
+      INSERT INTO regions (kind, name, version, geom)
+      VALUES ('AD_HOC', ${'range-region-' + stamp}, 1, ST_GeomFromGeoJSON(${JSON.stringify(poly)}))
+      RETURNING id, version
+    `))[0]!
+    const [vc] = await ctx.db.insert(vehicleClasses).values({ name: `vc-range-${stamp}`, level: 1 }).returning()
+    const [tc] = await ctx.db.insert(taskClasses).values({ name: `tc-range-${stamp}`, level: 1 }).returning()
+    const seedAt = async (ymd: string) => {
+      const [p] = await ctx.db.insert(predictions).values({
+        sourceKind: 'WATCHLIST', sourceId: vc!.id,
+        regionId: reg.id, regionVersion: reg.version,
+        windowDate: new Date(ymd), windowHalf: 'AM',
+        vehicleClassId: vc!.id, taskClassId: tc!.id,
+        kDays: 7, expiresAt: new Date(Date.now() + 7 * 86400_000),
+      }).returning()
+      return p!.id
+    }
+    const idApr = await seedAt('2027-04-30')
+    const idMayEarly = await seedAt('2027-05-01')
+    const idMayMid = await seedAt('2027-05-15')
+    const idMayEnd = await seedAt('2027-05-31')
+    const idJun = await seedAt('2027-06-01')
+
+    const res = await app.request('/predictions?from=2027-05-01&to=2027-05-31&limit=500', {
+      headers: { cookie: deciderCookie },
+    })
+    expect(res.status).toBe(200)
+    const body = await res.json() as Array<{ id: string; windowDate: string }>
+    const got = new Set(body.map((p) => p.id))
+    expect(got.has(idMayEarly)).toBe(true)
+    expect(got.has(idMayMid)).toBe(true)
+    expect(got.has(idMayEnd)).toBe(true)
+    expect(got.has(idApr)).toBe(false)
+    expect(got.has(idJun)).toBe(false)
+  })
+
+  test('GET /predictions?from=garbage returns 400', async () => {
+    const res = await app.request('/predictions?from=not-a-date', {
+      headers: { cookie: deciderCookie },
+    })
+    expect(res.status).toBe(400)
+  })
+
+  test('GET /predictions?to=garbage returns 400', async () => {
+    const res = await app.request('/predictions?to=2026/05/01', {
+      headers: { cookie: deciderCookie },
+    })
+    expect(res.status).toBe(400)
+  })
+
+  test('GET /predictions?from=2027-07-01 (from-only) excludes earlier rows', async () => {
+    const stamp = `fromonly-${Date.now()}`
+    const reg = (await ctx.db.execute<{ id: string; version: number }>(sql`
+      INSERT INTO regions (kind, name, version, geom)
+      VALUES ('AD_HOC', ${'fromonly-region-' + stamp}, 1, ST_GeomFromGeoJSON(${JSON.stringify(poly)}))
+      RETURNING id, version
+    `))[0]!
+    const [vc] = await ctx.db.insert(vehicleClasses).values({ name: `vc-fromonly-${stamp}`, level: 1 }).returning()
+    const [tc] = await ctx.db.insert(taskClasses).values({ name: `tc-fromonly-${stamp}`, level: 1 }).returning()
+    const seedAt = async (ymd: string) => {
+      const [p] = await ctx.db.insert(predictions).values({
+        sourceKind: 'WATCHLIST', sourceId: vc!.id,
+        regionId: reg.id, regionVersion: reg.version,
+        windowDate: new Date(ymd), windowHalf: 'AM',
+        vehicleClassId: vc!.id, taskClassId: tc!.id,
+        kDays: 7, expiresAt: new Date(Date.now() + 7 * 86400_000),
+      }).returning()
+      return p!.id
+    }
+    const idEarly = await seedAt('2027-06-30')
+    const idLate = await seedAt('2027-07-15')
+
+    const res = await app.request('/predictions?from=2027-07-01&limit=500', {
+      headers: { cookie: deciderCookie },
+    })
+    expect(res.status).toBe(200)
+    const body = await res.json() as Array<{ id: string }>
+    const got = new Set(body.map((p) => p.id))
+    expect(got.has(idLate)).toBe(true)
+    expect(got.has(idEarly)).toBe(false)
+  })
+
   test('GET /predictions/:id returns detail + snapshots', async () => {
     const res = await app.request(`/predictions/${predictionId}`, { headers: { cookie: deciderCookie } })
     expect(res.status).toBe(200)

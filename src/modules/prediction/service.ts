@@ -1,4 +1,4 @@
-import { and, eq, inArray, sql } from 'drizzle-orm'
+import { and, eq, gte, inArray, lte, sql } from 'drizzle-orm'
 import type { Db } from '@/db/client'
 import {
   confidenceSnapshots,
@@ -23,6 +23,12 @@ export type ListPredictionsOpts = {
    * 列表只想看"有证据"的)。Backend SQL 用 EXISTS 子查询过滤,O(N)。
    */
   hasEvidence?: boolean
+  /**
+   * Schedule tab: 按 prediction.windowDate 过滤 [from, to](YYYY-MM-DD)。
+   * 任一为空时该端不约束;两端齐全时返回该日历窗口内的所有 prediction。
+   */
+  from?: string
+  to?: string
 }
 
 /**
@@ -54,6 +60,8 @@ export async function listPredictions(
       SELECT p.* FROM predictions p
       WHERE EXISTS (SELECT 1 FROM news_evidence ne WHERE ne.prediction_id = p.id)
         ${opts.status ? sql`AND p.status = ${opts.status}` : sql``}
+        ${opts.from ? sql`AND p.window_date >= ${opts.from}::date` : sql``}
+        ${opts.to ? sql`AND p.window_date <= ${opts.to}::date` : sql``}
       ORDER BY p.created_at DESC
       LIMIT ${limit}
     `)
@@ -63,9 +71,17 @@ export async function listPredictions(
     }
     return attachLatestSnapshots(db, rows)
   }
-  const rows = opts.status
+  const clauses = []
+  if (opts.status) clauses.push(eq(predictions.status, opts.status))
+  if (opts.from) clauses.push(gte(predictions.windowDate, new Date(opts.from + 'T00:00:00Z')))
+  if (opts.to) clauses.push(lte(predictions.windowDate, new Date(opts.to + 'T00:00:00Z')))
+  const whereExpr = clauses.length === 0 ? undefined
+    : clauses.length === 1 ? clauses[0]
+    : and(...clauses)
+
+  const rows = whereExpr
     ? await db.select().from(predictions)
-        .where(eq(predictions.status, opts.status))
+        .where(whereExpr)
         .orderBy(sql`${predictions.createdAt} DESC`)
         .limit(limit)
     : await db.select().from(predictions)
