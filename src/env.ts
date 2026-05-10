@@ -29,9 +29,17 @@ const EnvSchema = z.object({
   // --- Gov-site scrapers (Plan-D Task 12, A2-γ) ---
   // Disabled by default. Concrete subclasses (Tasks 13-15) read these URLs.
   GOV_SCRAPER_ENABLED: z.enum(['true', 'false']).default('false'),
-  GOV_GD_PROVINCE_URL: z.string().url().default('https://www.gd.gov.cn/gdywdt/sxtt/'),
-  GOV_GZ_CITY_URL: z.string().url().default('https://www.gz.gov.cn/zwgk/zfxxgkml/'),
-  GOV_PUBLIC_SECURITY_URL: z.string().url().default('https://www.gd.gov.cn/zfxxgk/'),
+  // 政务网爬虫 URL 配置 — 多 URL 用逗号分隔(adapter 会循环抓取所有)
+  GOV_GD_PROVINCE_URL: z.string().default(
+    [
+      'https://www.gd.gov.cn/gdywdt/gdyw/index.html',  // 广东要闻
+      'https://www.gd.gov.cn/gdywdt/bmdt/index.html',  // 部门动态
+      'https://www.gd.gov.cn/gdywdt/dsdt/index.html',  // 地市动态
+      'https://www.gd.gov.cn/gdywdt/zfjg/index.html',  // 政府机构
+    ].join(','),
+  ),
+  GOV_GZ_CITY_URL: z.string().default('https://www.gz.gov.cn/zwgk/zfxxgkml/'),
+  GOV_PUBLIC_SECURITY_URL: z.string().default('https://www.gd.gov.cn/zfxxgk/'),
 
   // --- 高德地理编码 ---
   AMAP_GEOCODE_KEY: z.string().default(''),
