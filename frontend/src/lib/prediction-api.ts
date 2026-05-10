@@ -177,6 +177,26 @@ export async function spawnFromNews(): Promise<SpawnFromNewsResult> {
   })
 }
 
+// 单 watchlist 版 — 前端按列表串行调,每条返回后展示进度
+export type SpawnFromNewsForWatchlistResult = {
+  ok: boolean
+  watchlistId: string
+  name: string
+  newsFetched: number
+  newsInserted: number
+  extractAttempted: number
+  predictionsCreated: number
+  predictionsMerged: number
+  llmDegraded: number
+  skipped?: boolean
+  reason?: string
+}
+export async function spawnFromNewsForWatchlist(watchlistId: string): Promise<SpawnFromNewsForWatchlistResult> {
+  return api<SpawnFromNewsForWatchlistResult>(`/predictions/spawn-from-news/${watchlistId}`, {
+    method: 'POST', body: '{}',
+  })
+}
+
 export async function recomputeNow(id: string): Promise<{ ok: boolean; mode: 'FULL' | 'INCR'; message: string }> {
   // m5 G5: 后端 recompute-now 改为真触发 fullRecalcQueue + manualTrigger=true (P5)
   // 返回 { ok, mode: 'FULL', message } —— 默认 FULL P5 模式

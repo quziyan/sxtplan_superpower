@@ -64,8 +64,20 @@ export function EvidenceList({
     return <div className="empty" style={{ padding: 'var(--sp-5)' }}>暂无推理记录与证据</div>
   }
 
+  // 通用证据表格(snapshot 内 cited 段 + orphan 段共用)
+  const tableHeader = (
+    <thead>
+      <tr style={{ borderBottom: '1px solid var(--c-border, #2a2f3a)', color: 'var(--c-muted)', fontSize: 'var(--fs-2)' }}>
+        <th style={{ textAlign: 'left', padding: '6px 8px', whiteSpace: 'nowrap', width: 60 }}>状态</th>
+        <th style={{ textAlign: 'left', padding: '6px 8px', whiteSpace: 'nowrap', width: 110 }}>发表时间</th>
+        <th style={{ textAlign: 'left', padding: '6px 8px', whiteSpace: 'nowrap', width: 140 }}>来源</th>
+        <th style={{ textAlign: 'left', padding: '6px 8px' }}>标题</th>
+      </tr>
+    </thead>
+  )
+
   return (
-    <div>
+    <div style={{ width: '100%' }}>
       {/* 图例 */}
       <div style={{ display: 'flex', gap: 'var(--sp-3)', fontSize: 'var(--fs-2)', color: 'var(--c-muted)', marginBottom: 'var(--sp-3)' }}>
         <span><span style={{ color: COLOR_NEW, fontWeight: 600 }}>● </span>本次新增证据</span>
@@ -74,14 +86,26 @@ export function EvidenceList({
 
       {/* per-snapshot 块 */}
       {blocks.map(({ snap, cited }) => (
-        <div key={snap.id} className="evidence-row" id={`snap-${snap.id}`} style={{ flexDirection: 'column', alignItems: 'stretch' }}>
-          <div style={{ display: 'flex', gap: 'var(--sp-3)', alignItems: 'center', marginBottom: 'var(--sp-2)' }}>
+        <div
+          key={snap.id}
+          id={`snap-${snap.id}`}
+          style={{
+            width: '100%',
+            marginBottom: 'var(--sp-5)',
+            padding: 'var(--sp-4)',
+            background: 'var(--c-panel, #181b22)',
+            border: '1px solid var(--c-border, #2a2f3a)',
+            borderRadius: 8,
+          }}
+        >
+          {/* Header 行:tag + operator + 时间 + confidence */}
+          <div style={{ display: 'flex', gap: 'var(--sp-3)', alignItems: 'center', marginBottom: 'var(--sp-3)', flexWrap: 'wrap' }}>
             <span className={`tag ${snap.kind === 'FULL' ? 'tag--accent' : snap.kind === 'MANUAL' ? 'tag--warn' : 'tag--ghost'}`}>
               {snap.kind}
             </span>
             <span style={{ fontWeight: 600 }}>{snap.operator ?? '系统'}</span>
             <span style={{ color: 'var(--c-muted)', fontSize: 'var(--fs-2)' }}>{fmtCnTime(snap.occurredAt)}</span>
-            <span style={{ marginLeft: 'auto', fontWeight: 600 }}>conf {snap.confidence}</span>
+            <span style={{ marginLeft: 'auto', fontWeight: 600, fontSize: 'var(--fs-3)' }}>置信度 {snap.confidence}</span>
             {snap.confidenceCiLow !== null && snap.confidenceCiHigh !== null && (
               <span style={{ color: 'var(--c-muted)', fontSize: 'var(--fs-2)' }}>
                 CI [{snap.confidenceCiLow}, {snap.confidenceCiHigh}]
@@ -89,43 +113,67 @@ export function EvidenceList({
             )}
           </div>
 
+          {/* 推理段:全宽 + 大字号 + 充足 padding,不压缩成窄文本框 */}
           {snap.reasoning && (
-            <div className="evidence-row__snippet" style={{ marginBottom: 'var(--sp-3)' }}>
+            <div style={{
+              width: '100%',
+              padding: 'var(--sp-3) var(--sp-4)',
+              background: 'var(--c-panel-2, #20242c)',
+              borderLeft: '3px solid var(--c-accent, #4ea1ff)',
+              borderRadius: 4,
+              fontSize: 'var(--fs-3)',
+              lineHeight: 1.7,
+              color: 'var(--c-text-1, #d6dae3)',
+              marginBottom: 'var(--sp-4)',
+              whiteSpace: 'pre-wrap',
+              wordBreak: 'break-word',
+            }}>
+              <div style={{ fontSize: 'var(--fs-2)', color: 'var(--c-muted)', marginBottom: 6, fontWeight: 600 }}>
+                推理
+              </div>
               {snap.reasoning}
             </div>
           )}
 
+          {/* 引用新闻表格 */}
           {cited.length > 0 ? (
-            <div style={{ paddingLeft: 'var(--sp-3)', borderLeft: '2px solid var(--c-border, #2a2f3a)' }}>
-              <div style={{ fontSize: 'var(--fs-2)', color: 'var(--c-muted)', marginBottom: 'var(--sp-1)' }}>
-                📰 引用新闻({cited.length} 条,新增 {cited.filter(c => c.isNew).length} · 复用 {cited.filter(c => !c.isNew).length})
+            <div>
+              <div style={{ fontSize: 'var(--fs-2)', color: 'var(--c-muted)', marginBottom: 'var(--sp-2)' }}>
+                📰 引用新闻({cited.length} 条 · 新增 {cited.filter(c => c.isNew).length} · 复用 {cited.filter(c => !c.isNew).length})
               </div>
-              {cited.map(({ news, isNew }) => (
-                <div key={news.id} style={{ marginBottom: 'var(--sp-1)', fontSize: 'var(--fs-2)' }}>
-                  <span style={{ color: isNew ? COLOR_NEW : COLOR_REUSE, fontWeight: 700, marginRight: 6 }}>
-                    {isNew ? '● 新' : '○ 复用'}
-                  </span>
-                  <a href={news.url} target="_blank" rel="noreferrer"
-                     style={{ color: COLOR_LINK, textDecoration: 'underline', textDecorationStyle: isNew ? 'solid' : 'dotted' }}>
-                    {news.title}
-                  </a>
-                  <span style={{ color: 'var(--c-muted)', marginLeft: 'var(--sp-2)' }}>
-                    {news.sourceLabel}
-                    {news.publishedAt
-                      ? ` · 发表 ${fmtCnDate(news.publishedAt)}`
-                      : ' · 发表时间未知'}
-                  </span>
-                </div>
-              ))}
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 'var(--fs-2)' }}>
+                {tableHeader}
+                <tbody>
+                  {cited.map(({ news, isNew }) => (
+                    <tr key={news.id} style={{ borderBottom: '1px solid var(--c-border, #2a2f3a)' }}>
+                      <td style={{ padding: '8px', color: isNew ? COLOR_NEW : COLOR_REUSE, fontWeight: 700, whiteSpace: 'nowrap' }}>
+                        {isNew ? '● 新' : '○ 复用'}
+                      </td>
+                      <td style={{ padding: '8px', whiteSpace: 'nowrap', color: 'var(--c-muted)' }}>
+                        {news.publishedAt ? fmtCnDate(news.publishedAt) : '未知'}
+                      </td>
+                      <td style={{ padding: '8px', color: 'var(--c-muted)' }}>
+                        {news.sourceLabel}
+                      </td>
+                      <td style={{ padding: '8px' }}>
+                        <a href={news.url} target="_blank" rel="noreferrer"
+                           style={{ color: COLOR_LINK, textDecoration: 'underline', textDecorationStyle: isNew ? 'solid' : 'dotted' }}>
+                          {news.title}
+                        </a>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
           ) : evidence.length > 0 ? (
-            <div style={{ fontSize: 'var(--fs-2)', color: 'var(--c-muted)', paddingLeft: 'var(--sp-3)', borderLeft: '2px solid var(--c-border, #2a2f3a)' }}>
+            <div style={{ fontSize: 'var(--fs-2)', color: 'var(--c-muted)', padding: 'var(--sp-2)' }}>
               📂 该次推理未单独 cite 新闻 — <a href="#evidence-pool" style={{ color: COLOR_LINK, textDecoration: 'underline' }}>
                 跳转证据池({evidence.length} 条)
               </a>
             </div>
           ) : (
-            <div style={{ fontSize: 'var(--fs-2)', color: 'var(--c-muted)', fontStyle: 'italic' }}>
+            <div style={{ fontSize: 'var(--fs-2)', color: 'var(--c-muted)', fontStyle: 'italic', padding: 'var(--sp-2)' }}>
               该次推理无证据(LLM 在证据池为空时基于 V/T/region metadata 评估)
             </div>
           )}
@@ -134,26 +182,47 @@ export function EvidenceList({
 
       {/* 未被任何 snapshot 引用的 evidence(原始证据池里 LLM 没 cite 的)*/}
       {orphanEvidence.length > 0 && (
-        <div id="evidence-pool" style={{ marginTop: 'var(--sp-4)' }}>
+        <div id="evidence-pool" style={{
+          width: '100%', marginTop: 'var(--sp-4)', padding: 'var(--sp-4)',
+          background: 'var(--c-panel, #181b22)',
+          border: '1px solid var(--c-border, #2a2f3a)',
+          borderRadius: 8,
+        }}>
           <div style={{ fontSize: 'var(--fs-2)', color: 'var(--c-muted)', marginBottom: 'var(--sp-2)' }}>
             📂 证据池剩余({orphanEvidence.length} 条 — 已写入但 LLM 未引用)
           </div>
-          {orphanEvidence.map(ev => (
-            <div key={ev.evidenceId} style={{ fontSize: 'var(--fs-2)', marginBottom: 'var(--sp-1)', paddingLeft: 'var(--sp-3)' }}>
-              <span className={`tag ${ev.weight === 'HIGH' ? 'tag--accent' : ev.weight === 'MED' ? 'tag--warn' : 'tag--ghost'}`} style={{ marginRight: 6 }}>
-                {ev.weight}
-              </span>
-              <a href={ev.news.url} target="_blank" rel="noreferrer" style={{ color: COLOR_LINK }}>
-                {ev.news.title}
-              </a>
-              <span style={{ color: 'var(--c-muted)', marginLeft: 'var(--sp-2)' }}>
-                {ev.news.sourceLabel}
-                {ev.news.publishedAt
-                  ? ` · 发表 ${fmtCnDate(ev.news.publishedAt)}`
-                  : ' · 发表时间未知'}
-              </span>
-            </div>
-          ))}
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 'var(--fs-2)' }}>
+            <thead>
+              <tr style={{ borderBottom: '1px solid var(--c-border, #2a2f3a)', color: 'var(--c-muted)', fontSize: 'var(--fs-2)' }}>
+                <th style={{ textAlign: 'left', padding: '6px 8px', whiteSpace: 'nowrap', width: 60 }}>权重</th>
+                <th style={{ textAlign: 'left', padding: '6px 8px', whiteSpace: 'nowrap', width: 110 }}>发表时间</th>
+                <th style={{ textAlign: 'left', padding: '6px 8px', whiteSpace: 'nowrap', width: 140 }}>来源</th>
+                <th style={{ textAlign: 'left', padding: '6px 8px' }}>标题</th>
+              </tr>
+            </thead>
+            <tbody>
+              {orphanEvidence.map(ev => (
+                <tr key={ev.evidenceId} style={{ borderBottom: '1px solid var(--c-border, #2a2f3a)' }}>
+                  <td style={{ padding: '8px', whiteSpace: 'nowrap' }}>
+                    <span className={`tag ${ev.weight === 'HIGH' ? 'tag--accent' : ev.weight === 'MED' ? 'tag--warn' : 'tag--ghost'}`}>
+                      {ev.weight}
+                    </span>
+                  </td>
+                  <td style={{ padding: '8px', whiteSpace: 'nowrap', color: 'var(--c-muted)' }}>
+                    {ev.news.publishedAt ? fmtCnDate(ev.news.publishedAt) : '未知'}
+                  </td>
+                  <td style={{ padding: '8px', color: 'var(--c-muted)' }}>
+                    {ev.news.sourceLabel}
+                  </td>
+                  <td style={{ padding: '8px' }}>
+                    <a href={ev.news.url} target="_blank" rel="noreferrer" style={{ color: COLOR_LINK }}>
+                      {ev.news.title}
+                    </a>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       )}
     </div>

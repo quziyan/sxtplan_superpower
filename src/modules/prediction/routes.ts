@@ -195,70 +195,115 @@ export function predictionRoutes(db: Db, deps: PredictionRouteDeps = {}) {
     return c.json({ ok: true, prediction: after })
   })
 
-  // (β) 「📡 生成预测」按钮新后端 — 每个 active watchlist 一轮:
+  // (β) 「📡 生成预测」按钮新后端 — 单个 active watchlist 一轮:
   //   ① 拉新闻(scoped tickNewsIngest,使用 settings.news_freshness_days 窗口)
-  //   ② 同步 drain extract(每条新 news 跑 LLM)
+  //   ② 同步 drain extract(每条新 news 跑 LLM,**并发 3** 加速)
   //   ③ createPredictionFromNews 幂等合并(已存在 → 加 evidence + 新 snap + max conf)
   // 所有 prediction 必带 news_evidence(三表原子写),贯彻 #1 原则。
+  // 前端按 active watchlist 列表串行调此路由,每条返后展示进度;多 wl 整体
+  // 时长被前端进度条吸收,UX 不再「卡住」。
+  const SPAWN_EXTRACT_CONCURRENCY = 3
+
+  app.post('/spawn-from-news/:watchlistId', authRequired(db),
+    roleRequired('ANALYST'),
+    async (c) => {
+      const watchlistId = c.req.param('watchlistId')
+      const [wl] = await db.select().from(watchLists).where(eq(watchLists.id, watchlistId))
+      if (!wl) throw NotFound(`watchlist ${watchlistId} not found`)
+      if (!wl.isActive) {
+        return c.json({
+          ok: true, watchlistId, name: wl.name,
+          newsFetched: 0, newsInserted: 0, extractAttempted: 0,
+          predictionsCreated: 0, predictionsMerged: 0, llmDegraded: 0,
+          skipped: true, reason: 'inactive',
+        })
+      }
+
+      // 步骤 ①:scoped 抓新闻
+      const ingest = await tickNewsIngest({
+        db,
+        triageQueue: newsTriageQueue,
+        extractQueue: newsExtractQueue,
+        onlyWatchlistId: wl.id,
+      })
+
+      // 步骤 ②③:并发 drain extract(SPAWN_EXTRACT_CONCURRENCY 控速,避免 LLM rate)
+      let created = 0, merged = 0, llmDegraded = 0, extractAttempted = 0
+      for (let i = 0; i < ingest.newlyInsertedNewsIds.length; i += SPAWN_EXTRACT_CONCURRENCY) {
+        const batch = ingest.newlyInsertedNewsIds.slice(i, i + SPAWN_EXTRACT_CONCURRENCY)
+        const results = await Promise.all(batch.map(async (newsId) => {
+          try {
+            return await runNewsExtractAgent(db, { newsId })
+          } catch (err) {
+            console.warn(`[spawn-from-news] extract failed for news=${newsId}:`, (err as Error).message)
+            return null
+          }
+        }))
+        for (const r of results) {
+          extractAttempted++
+          if (r === null) continue
+          created += r.created
+          merged += r.merged
+          if (r.llmDegraded) llmDegraded++
+        }
+      }
+
+      return c.json({
+        ok: true,
+        watchlistId: wl.id,
+        name: wl.name,
+        newsFetched: ingest.newsFetched,
+        newsInserted: ingest.newsInserted,
+        extractAttempted,
+        predictionsCreated: created,
+        predictionsMerged: merged,
+        llmDegraded,
+      })
+    },
+  )
+
+  // 旧 batch 路由 — 内部循环调上面 per-wl 服务函数;保留作 BC,前端不再用。
   app.post('/spawn-from-news', authRequired(db),
     roleRequired('ANALYST'),
     async (c) => {
       const active = await db.select().from(watchLists).where(eq(watchLists.isActive, true))
       const summary = {
-        watchlistsProcessed: 0,
-        newsFetched: 0,
-        newsInserted: 0,
-        extractAttempted: 0,
-        predictionsCreated: 0,
-        predictionsMerged: 0,
-        llmDegraded: 0,
-        errors: 0,
+        watchlistsProcessed: 0, newsFetched: 0, newsInserted: 0,
+        extractAttempted: 0, predictionsCreated: 0, predictionsMerged: 0,
+        llmDegraded: 0, errors: 0,
         perWatchlist: [] as Array<{
-          watchlistId: string
-          name: string
-          newsFetched: number
-          newsInserted: number
-          extracted: number
-          created: number
-          merged: number
-          error?: string
-        }>,
-      }
-      for (const wl of active) {
-        const wlReport: {
           watchlistId: string; name: string
           newsFetched: number; newsInserted: number; extracted: number
           created: number; merged: number; error?: string
-        } = {
+        }>,
+      }
+      for (const wl of active) {
+        const wlReport: typeof summary.perWatchlist[number] = {
           watchlistId: wl.id, name: wl.name,
           newsFetched: 0, newsInserted: 0, extracted: 0, created: 0, merged: 0,
         }
         try {
-          // 步骤 ①:scoped 抓新闻(用 settings.news_freshness_days)
           const ingest = await tickNewsIngest({
-            db,
-            triageQueue: newsTriageQueue,
-            extractQueue: newsExtractQueue,
+            db, triageQueue: newsTriageQueue, extractQueue: newsExtractQueue,
             onlyWatchlistId: wl.id,
           })
           wlReport.newsFetched = ingest.newsFetched
           wlReport.newsInserted = ingest.newsInserted
           summary.newsFetched += ingest.newsFetched
           summary.newsInserted += ingest.newsInserted
-
-          // 步骤 ②③:同步 drain extract — 不靠 BullMQ 异步;用户立等
-          for (const newsId of ingest.newlyInsertedNewsIds) {
-            try {
-              const r = await runNewsExtractAgent(db, { newsId })
-              wlReport.extracted++
-              summary.extractAttempted++
-              wlReport.created += r.created
-              wlReport.merged += r.merged
-              summary.predictionsCreated += r.created
-              summary.predictionsMerged += r.merged
+          // 同上 concurrency 3
+          for (let i = 0; i < ingest.newlyInsertedNewsIds.length; i += SPAWN_EXTRACT_CONCURRENCY) {
+            const batch = ingest.newlyInsertedNewsIds.slice(i, i + SPAWN_EXTRACT_CONCURRENCY)
+            const results = await Promise.all(batch.map(async (nId) => {
+              try { return await runNewsExtractAgent(db, { newsId: nId }) }
+              catch { return null }
+            }))
+            for (const r of results) {
+              wlReport.extracted++; summary.extractAttempted++
+              if (r === null) continue
+              wlReport.created += r.created; wlReport.merged += r.merged
+              summary.predictionsCreated += r.created; summary.predictionsMerged += r.merged
               if (r.llmDegraded) summary.llmDegraded++
-            } catch (err) {
-              console.warn(`[spawn-from-news] extract failed for news=${newsId}:`, err)
             }
           }
           summary.watchlistsProcessed++

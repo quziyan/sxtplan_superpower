@@ -6,7 +6,7 @@ import { listTaskCards, type TaskCard } from '@/lib/taskcard-api'
 import { listVehicleClasses, listTaskClasses, type VehicleClass, type TaskClass } from '@/lib/taxonomy-api'
 import { listRegions, type RegionListItem } from '@/lib/region-api'
 import { getNewsFreshnessDays, setNewsFreshnessDays } from '@/lib/settings-api'
-import { recomputeNow, spawnFromNews } from '@/lib/prediction-api'
+import { recomputeNow, spawnFromNewsForWatchlist } from '@/lib/prediction-api'
 import { NewWatchListModal } from './NewWatchListModal'
 import { NewTaskCardModal } from './NewTaskCardModal'
 
@@ -35,8 +35,19 @@ export function AnalystView({ onOpenPrediction, mutationVersion = 0 }: {
     { done: number; total: number; currentId: string | null; failed: number; finished?: boolean }
     | null
   >(null)
-  // 预测生产状态:'spawning' | { done: bool, message: string } | null
-  const [spawning, setSpawning] = useState(false)
+  // 预测生产状态 — 类似批量重算的 progress 模式:
+  //  null = 空闲;{ done, total, currentName, ... } = 串行处理中
+  const [spawnProgress, setSpawnProgress] = useState<{
+    done: number
+    total: number
+    currentName: string | null
+    totalsCreated: number
+    totalsMerged: number
+    totalsNewsFetched: number
+    totalsNewsInserted: number
+    finished?: boolean
+    failed?: number
+  } | null>(null)
   const [spawnFlash, setSpawnFlash] = useState<string | null>(null)
 
   // Refetch watchlists after a new one is created via the modal. Predictions
@@ -110,35 +121,59 @@ export function AnalystView({ onOpenPrediction, mutationVersion = 0 }: {
     }, 12_000)
   }
 
-  // (β) 「📡 生成预测」 — 触发 spawn-from-news:
-  //  ① 对每个 active watchlist 拉新闻(用 settings.news_freshness_days 窗口)
-  //  ② 同步 drain extract → 创建/合并 prediction(必带 evidence)
-  // backend 跑 1-3 分钟,UI 显示 spinner + 末尾报告。
+  // (β) 「📡 生成预测」 — 前端按 active watchlist 串行调 per-wl 路由,
+  // 每个 wl 后端做 ① scoped tickNewsIngest ② 并发 3 drain extract。
+  // UI 显示进度条:处理中 N/M · 当前 [天河区...] · 累计抓 X 条新闻 / 新建 Y 预测
   const onSpawnAll = async () => {
-    if (spawning) return
-    setSpawning(true)
+    if (spawnProgress && !spawnProgress.finished) return
     setSpawnFlash(null)
+    const activeWls = watchlists.filter(w => w.isActive)
+    if (activeWls.length === 0) {
+      setSpawnFlash('✗ 没有 active watchlist,请先创建/激活')
+      setTimeout(() => setSpawnFlash(null), 8000)
+      return
+    }
+    let totalsCreated = 0, totalsMerged = 0, totalsNewsFetched = 0, totalsNewsInserted = 0, failed = 0
+    setSpawnProgress({
+      done: 0, total: activeWls.length, currentName: null,
+      totalsCreated, totalsMerged, totalsNewsFetched, totalsNewsInserted, failed: 0,
+    })
+    for (let i = 0; i < activeWls.length; i++) {
+      const wl = activeWls[i]!
+      setSpawnProgress({
+        done: i, total: activeWls.length, currentName: wl.name,
+        totalsCreated, totalsMerged, totalsNewsFetched, totalsNewsInserted, failed,
+      })
+      try {
+        const r = await spawnFromNewsForWatchlist(wl.id)
+        totalsCreated += r.predictionsCreated
+        totalsMerged += r.predictionsMerged
+        totalsNewsFetched += r.newsFetched
+        totalsNewsInserted += r.newsInserted
+      } catch (err) {
+        console.error(`[spawn] watchlist ${wl.id} failed:`, err)
+        failed++
+      }
+    }
+    setSpawnProgress({
+      done: activeWls.length, total: activeWls.length, currentName: null,
+      totalsCreated, totalsMerged, totalsNewsFetched, totalsNewsInserted, failed, finished: true,
+    })
+    // 末尾闪存
+    const parts = [
+      `✓ 处理 ${activeWls.length - failed}/${activeWls.length} 个监视清单`,
+      `抓 ${totalsNewsFetched} 条新闻(${totalsNewsInserted} 新)`,
+      `新建 ${totalsCreated} 条预测`,
+      `合并 ${totalsMerged} 条`,
+    ]
+    if (failed > 0) parts.push(`⚠ 失败 ${failed}`)
+    setSpawnFlash(parts.join(' · '))
+    // 刷新列表
     try {
-      const r = await spawnFromNews()
-      const parts: string[] = [
-        `✓ 处理 ${r.watchlistsProcessed} 个监视清单`,
-        `抓 ${r.newsFetched} 条新闻(${r.newsInserted} 新)`,
-        `新建 ${r.predictionsCreated} 条预测`,
-        `合并 ${r.predictionsMerged} 条`,
-      ]
-      if (r.llmDegraded > 0) parts.push(`⚠ LLM 失败 ${r.llmDegraded}`)
-      if (r.errors > 0) parts.push(`⚠ 错误 ${r.errors}`)
-      setSpawnFlash(parts.join(' · '))
-      // 刷新列表
       const fresh = await listPredictions({ status: 'PROPOSED', limit: 100, includeLatestSnapshot: true })
       setPredictions(fresh)
-      setTimeout(() => setSpawnFlash(null), 12000)
-    } catch (e) {
-      setSpawnFlash('✗ ' + (e as Error).message)
-      setTimeout(() => setSpawnFlash(null), 12000)
-    } finally {
-      setSpawning(false)
-    }
+    } catch (e) { console.error(e) }
+    setTimeout(() => { setSpawnProgress(null); setSpawnFlash(null) }, 8000)
   }
 
   const onSaveFreshness = async () => {
@@ -290,8 +325,11 @@ export function AnalystView({ onOpenPrediction, mutationVersion = 0 }: {
                 {freshnessSaving ? '保存中…' : '保存'}
               </Btn>
             </span>
-            <Btn disabled={spawning} onClick={onSpawnAll}>
-              📡 {spawning ? '生产中…' : '生成预测'}
+            <Btn
+              disabled={spawnProgress !== null && !spawnProgress.finished}
+              onClick={onSpawnAll}
+            >
+              📡 {spawnProgress && !spawnProgress.finished ? `生产中 ${spawnProgress.done}/${spawnProgress.total}` : '生成预测'}
             </Btn>
             <Btn
               disabled={batchProgress !== null && !batchProgress.finished || filtered.length === 0}
@@ -305,6 +343,40 @@ export function AnalystView({ onOpenPrediction, mutationVersion = 0 }: {
           </>}
         />
         <div className="workspace__body">
+          {/* 📡 生成预测进度面板(spawn-from-news 串行处理 active watchlist)*/}
+          {spawnProgress && !spawnProgress.finished && (
+            <div style={{
+              marginBottom: 'var(--sp-4)', padding: 'var(--sp-3) var(--sp-4)',
+              background: 'var(--c-panel-2)', borderRadius: 6,
+              border: '1px solid var(--c-accent, #4ea1ff)',
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--sp-3)', marginBottom: 'var(--sp-2)' }}>
+                <span style={{ fontSize: 'var(--fs-3)', fontWeight: 600 }}>
+                  📡 生成预测中 {spawnProgress.done}/{spawnProgress.total}
+                </span>
+                <div style={{
+                  flex: 1, height: 6, background: 'var(--c-border, #2a2f3a)', borderRadius: 3, overflow: 'hidden',
+                }}>
+                  <div style={{
+                    width: `${(spawnProgress.done / Math.max(1, spawnProgress.total)) * 100}%`,
+                    height: '100%',
+                    background: 'var(--c-accent, #4ea1ff)',
+                    transition: 'width 200ms ease',
+                  }} />
+                </div>
+                {spawnProgress.currentName && (
+                  <span style={{ fontSize: 'var(--fs-2)', color: 'var(--c-muted)' }}>
+                    当前 [{spawnProgress.currentName}]
+                  </span>
+                )}
+              </div>
+              <div style={{ fontSize: 'var(--fs-2)', color: 'var(--c-muted)' }}>
+                累计:抓 {spawnProgress.totalsNewsFetched} 条新闻({spawnProgress.totalsNewsInserted} 新)
+                · 新建 {spawnProgress.totalsCreated} · 合并 {spawnProgress.totalsMerged}
+                {spawnProgress.failed && spawnProgress.failed > 0 ? ` · ⚠ 失败 ${spawnProgress.failed}` : ''}
+              </div>
+            </div>
+          )}
           {spawnFlash && (
             <div style={{
               marginBottom: 'var(--sp-3)', padding: 'var(--sp-2) var(--sp-3)',

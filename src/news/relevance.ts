@@ -83,8 +83,15 @@ export async function rerankHits(
   }
   const env = loadEnv()
   const threshold = opts.threshold ?? env.RELEVANCE_THRESHOLD
-  const maxToRerank = opts.maxToRerank ?? 20
-  const candidates = hits.slice(0, maxToRerank)
+  const maxToRerank = opts.maxToRerank ?? 50
+  // 调整:gov 源(权威中文政府站)优先排到 LLM 评分前面,确保 gov 总能上场;
+  // 不靠原始 fetch 顺序(aggregator 默认按 pool 注册序,Tavily 先 gov 后)
+  const sorted = [...hits].sort((a, b) => {
+    const aGov = a.source.kind === 'gov' ? 0 : 1
+    const bGov = b.source.kind === 'gov' ? 0 : 1
+    return aGov - bGov
+  })
+  const candidates = sorted.slice(0, maxToRerank)
   const inferFn = opts.inferFn ?? infer
 
   let parsed: RerankOutput
