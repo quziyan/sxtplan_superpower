@@ -6,7 +6,9 @@ import { listTaskCards, type TaskCard } from '@/lib/taskcard-api'
 import { listVehicleClasses, listTaskClasses, type VehicleClass, type TaskClass } from '@/lib/taxonomy-api'
 import { listRegions, type RegionListItem } from '@/lib/region-api'
 import { getNewsFreshnessDays, setNewsFreshnessDays } from '@/lib/settings-api'
-import { recomputeNow, spawnFromNewsForWatchlist } from '@/lib/prediction-api'
+import { recomputeNow, spawnFromNewsForWatchlist, deletePrediction, updatePrediction } from '@/lib/prediction-api'
+import { EditPredictionModal } from './EditPredictionModal'
+import type { PredictionTableRow } from '@/components/PredictionTable'
 import { NewWatchListModal } from './NewWatchListModal'
 import { NewTaskCardModal } from './NewTaskCardModal'
 
@@ -49,6 +51,9 @@ export function AnalystView({ onOpenPrediction, mutationVersion = 0 }: {
     failed?: number
   } | null>(null)
   const [spawnFlash, setSpawnFlash] = useState<string | null>(null)
+  // 编辑 modal + 删除处理
+  const [editingRow, setEditingRow] = useState<PredictionTableRow | null>(null)
+  const [actionFlash, setActionFlash] = useState<string | null>(null)
 
   // Refetch watchlists after a new one is created via the modal. Predictions
   // don't change when a watchlist is created (no signals attached yet) so we
@@ -424,10 +429,36 @@ export function AnalystView({ onOpenPrediction, mutationVersion = 0 }: {
           <div style={{ marginBottom: 'var(--sp-5)' }}>
             <KpiRow items={kpiItems} />
           </div>
+          {actionFlash && (
+            <div style={{
+              marginBottom: 'var(--sp-3)', padding: 'var(--sp-2) var(--sp-3)',
+              background: actionFlash.startsWith('✓') ? 'var(--c-ok-soft, rgba(34,197,94,0.12))' : 'var(--c-bad-soft, rgba(239,68,68,0.12))',
+              color: actionFlash.startsWith('✓') ? 'var(--c-ok)' : 'var(--c-bad)',
+              borderRadius: 6, fontSize: 'var(--fs-2)',
+            }}>{actionFlash}</div>
+          )}
           {loading ? (
             <div className="empty">加载中…</div>
           ) : (
-            <PredictionTable rows={tableRows} onOpen={onOpenPrediction} />
+            <PredictionTable
+              rows={tableRows}
+              onOpen={onOpenPrediction}
+              onEdit={(r) => setEditingRow(r)}
+              onDelete={async (r) => {
+                if (!window.confirm(`删除预测 [${r.id.slice(0,8)}] ${r.vehicleClassName}/${r.taskClassName}/${r.windowDate} ${r.windowHalf}?\n硬删 — 不可恢复(级联删除关联快照/证据)。`)) return
+                try {
+                  await deletePrediction(r.id)
+                  setActionFlash(`✓ 已删除 [${r.id.slice(0,8)}]`)
+                  // 重 fetch 列表
+                  const fresh = await listPredictions({ status: 'PROPOSED', limit: 100, includeLatestSnapshot: true })
+                  setPredictions(fresh)
+                  setTimeout(() => setActionFlash(null), 5000)
+                } catch (e) {
+                  setActionFlash('✗ ' + (e as Error).message)
+                  setTimeout(() => setActionFlash(null), 8000)
+                }
+              }}
+            />
           )}
         </div>
       </main>
@@ -442,6 +473,23 @@ export function AnalystView({ onOpenPrediction, mutationVersion = 0 }: {
         open={taskCardModalOpen}
         onClose={() => setTaskCardModalOpen(false)}
         onCreated={refreshTaskCards}
+      />
+
+      <EditPredictionModal
+        open={!!editingRow}
+        row={editingRow}
+        onClose={() => setEditingRow(null)}
+        onSubmit={async (patch) => {
+          if (!editingRow) return
+          await updatePrediction(editingRow.id, patch)
+          setActionFlash(`✓ 已更新预测 [${editingRow.id.slice(0,8)}] 窗口为 ${patch.windowDate ?? editingRow.windowDate.slice(0,10)} ${patch.windowHalf ?? editingRow.windowHalf}`)
+          // 重 fetch
+          try {
+            const fresh = await listPredictions({ status: 'PROPOSED', limit: 100, includeLatestSnapshot: true })
+            setPredictions(fresh)
+          } catch (e) { console.error(e) }
+          setTimeout(() => setActionFlash(null), 5000)
+        }}
       />
     </div>
   )

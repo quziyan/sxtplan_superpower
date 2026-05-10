@@ -10,6 +10,7 @@ import { triggerDispatchAfterApproval } from '@/scheduler/triggers/post-approval
 import { fullRecalcQueue, newsTriageQueue, refreshQueue } from '@/scheduler/queue'
 import { tickNewsIngest } from '@/scheduler/workers/news-ingest'
 import { dispatchTasks, mediaAssets, type DispatchTask, type MediaAsset } from '@/db/schema/dispatch'
+import { predictions } from '@/db/schema/prediction'
 import { requestCancel } from '@/dispatch/service'
 import { writeConfidenceSnapshot } from './confidence'
 import { getPrediction, getSnapshots, getNewsEvidence, getNewsByIds, listPredictions, transitionStatus } from './service'
@@ -174,6 +175,90 @@ export function predictionRoutes(db: Db, deps: PredictionRouteDeps = {}) {
       if (auth.activeRoleKey !== null) sendBackEntry.actorRoleKey = auth.activeRoleKey
       await logAudit(db, sendBackEntry)
       return c.json({ ok: true, prediction: after })
+    },
+  )
+
+  // ANALYST 可删除自己工作台上的 PROPOSED prediction(agent 推的不合理项)。
+  // 硬删 + cascade(snapshots / news_evidence / retrospectives 级联);
+  // dispatch_tasks RESTRICT 拦截 — PROPOSED 状态下不该有 dispatch。
+  // 审计:action='delete' before={status, V/T/region/window} 留档。
+  app.delete('/:id', authRequired(db), roleRequired('ANALYST'), async (c) => {
+    const auth = c.get('auth')
+    const id = c.req.param('id')
+    const before = await getPrediction(db, id)
+    if (!before) throw NotFound(`prediction ${id} not found`)
+    if (before.status !== 'PROPOSED') {
+      throw BadRequest(`only PROPOSED prediction can be deleted; current status=${before.status}`)
+    }
+    // 拿快照后再删,审计 before 字段有内容
+    await db.delete(predictions).where(eq(predictions.id, id))
+    const deleteEntry: import('@/audit/log').AuditEntry = {
+      actorUserId: auth.user.id,
+      targetKind: 'prediction', targetId: id, action: 'delete',
+      before: {
+        status: before.status,
+        vehicleClassId: before.vehicleClassId,
+        taskClassId: before.taskClassId,
+        regionId: before.regionId,
+        windowDate: before.windowDate,
+        windowHalf: before.windowHalf,
+        confidenceNow: before.confidenceNow,
+      },
+    }
+    if (auth.activeRoleKey !== null) deleteEntry.actorRoleKey = auth.activeRoleKey
+    await logAudit(db, deleteEntry)
+    return c.json({ ok: true, deletedId: id })
+  })
+
+  // ANALYST 编辑 PROPOSED prediction 的窗口(windowDate / windowHalf)。
+  // 改后 kDays 重算 = max(0, floor((windowDate - today) / 86400))。
+  // V/T/region 不允许改(那是新预测,该删了重建)。
+  const patchPredictionSchema = z.object({
+    windowDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+    windowHalf: z.enum(['AM', 'PM']).optional(),
+  }).refine((b) => b.windowDate !== undefined || b.windowHalf !== undefined,
+    { message: 'at least one of windowDate, windowHalf required' })
+
+  app.patch('/:id', authRequired(db),
+    roleRequired('ANALYST'),
+    zValidator('json', patchPredictionSchema),
+    async (c) => {
+      const auth = c.get('auth')
+      const id = c.req.param('id')
+      const body = c.req.valid('json')
+      const before = await getPrediction(db, id)
+      if (!before) throw NotFound(`prediction ${id} not found`)
+      if (before.status !== 'PROPOSED') {
+        throw BadRequest(`only PROPOSED prediction can be edited; current status=${before.status}`)
+      }
+      const newWindowDate = body.windowDate ? new Date(body.windowDate + 'T00:00:00Z') : before.windowDate
+      const newWindowHalf = body.windowHalf ?? before.windowHalf
+      const today = new Date()
+      today.setUTCHours(0, 0, 0, 0)
+      const newKDays = Math.max(0, Math.floor((newWindowDate.getTime() - today.getTime()) / 86_400_000))
+      const newExpiresAt = new Date(newWindowDate.getTime() + 10 * 86_400_000)
+
+      const [updated] = await db.update(predictions)
+        .set({
+          windowDate: newWindowDate,
+          windowHalf: newWindowHalf,
+          kDays: newKDays,
+          expiresAt: newExpiresAt,
+          updatedAt: new Date(),
+        })
+        .where(eq(predictions.id, id))
+        .returning()
+      if (!updated) throw new Error('update returned no rows')
+
+      const editEntry: import('@/audit/log').AuditEntry = {
+        actorUserId: auth.user.id,
+        targetKind: 'prediction', targetId: id, action: 'edit',
+        before: { windowDate: before.windowDate, windowHalf: before.windowHalf, kDays: before.kDays },
+        after: { windowDate: updated.windowDate, windowHalf: updated.windowHalf, kDays: updated.kDays },
+      }
+      if (auth.activeRoleKey !== null) editEntry.actorRoleKey = auth.activeRoleKey
+      await logAudit(db, editEntry)
+      return c.json({ ok: true, prediction: updated })
     },
   )
 

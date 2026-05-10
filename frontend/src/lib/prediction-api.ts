@@ -133,6 +133,21 @@ export async function sendBackPrediction(id: string, reason: string): Promise<{ 
   })
 }
 
+// ANALYST 删除 PROPOSED prediction(硬删 + 级联)
+export async function deletePrediction(id: string): Promise<{ ok: boolean; deletedId: string }> {
+  return api<{ ok: boolean; deletedId: string }>(`/predictions/${id}`, { method: 'DELETE' })
+}
+
+// ANALYST 编辑 PROPOSED prediction 的窗口(改 windowDate / windowHalf → 重算 kDays)
+export async function updatePrediction(
+  id: string,
+  patch: { windowDate?: string; windowHalf?: 'AM' | 'PM' },
+): Promise<{ ok: boolean; prediction: Prediction }> {
+  return api<{ ok: boolean; prediction: Prediction }>(`/predictions/${id}`, {
+    method: 'PATCH', body: JSON.stringify(patch),
+  })
+}
+
 export async function rejectPrediction(id: string, reason?: string): Promise<{ ok: boolean; prediction: Prediction }> {
   return api<{ ok: boolean; prediction: Prediction }>(`/predictions/${id}/reject`, {
     method: 'POST', body: JSON.stringify({ reason: reason ?? '' }),
