@@ -24,8 +24,21 @@ export const RETROSPECTIVE_SYSTEM = `
 字段:
 - causal_md: markdown,1-3 段,关键证据 + 误判信源 + 漏读信号
 - summary_md: 30 秒可读简报
-- evidence_news_ids: 引用的 news.id
-- key_signals: 决定性短语 ≤ 30 字
+- evidence_news_ids: 引用的 news.id(JSON 数组,例: ["abc","def"])
+- key_signals: 决定性短语 ≤ 30 字(JSON 数组,例: ["治安巡逻","夜间集中"];不是用逗号分隔的字符串)
+- composite: score_v/r/w/t 的整数平均(必须输出,不可省略)
+
+输出格式样例(必须严格按这个 JSON 结构输出,数组就是 [],不是字符串):
+{
+  "prediction_outcome": "HIT",
+  "capture_outcome": "CAPTURED",
+  "score_v": 85, "score_r": 80, "score_w": 75, "score_t": 90,
+  "composite": 82,
+  "causal_md": "...",
+  "summary_md": "...",
+  "evidence_news_ids": ["news-id-1","news-id-2"],
+  "key_signals": ["关键短语1","关键短语2"]
+}
 
 不要输出 markdown 围栏。
 `.trim()
@@ -57,8 +70,36 @@ export type RetrospectiveInput = {
   reviewerNotes?: string
 }
 
-export const RetrospectiveOutputSchema = z
-  .object({
+/**
+ * 防御性预处理:LLM 偶尔会
+ *   ① 把 key_signals 写成逗号/分号/换行分隔的字符串(应是数组)
+ *   ② 漏掉 composite(应取四维平均)
+ *   ③ evidence_news_ids 同①写成字符串
+ * 这里在 zod parse 前先 coerce,失败再 throw。
+ */
+function splitToArray(s: unknown): unknown {
+  if (typeof s !== 'string') return s
+  return s.split(/[,;\n、，；]+/).map(t => t.trim()).filter(t => t.length > 0)
+}
+
+export const RetrospectiveOutputSchema = z.preprocess(
+  (raw) => {
+    if (raw === null || typeof raw !== 'object') return raw
+    const o = { ...(raw as Record<string, unknown>) }
+    // ① key_signals 字符串 → 数组
+    if (typeof o.key_signals === 'string') o.key_signals = splitToArray(o.key_signals)
+    // ② evidence_news_ids 字符串 → 数组
+    if (typeof o.evidence_news_ids === 'string') o.evidence_news_ids = splitToArray(o.evidence_news_ids)
+    // ③ composite 缺失但四个 score 都在 → 取整数平均
+    if (typeof o.composite !== 'number') {
+      const sv = o.score_v, sr = o.score_r, sw = o.score_w, st = o.score_t
+      if ([sv, sr, sw, st].every(x => typeof x === 'number')) {
+        o.composite = Math.round(((sv as number) + (sr as number) + (sw as number) + (st as number)) / 4)
+      }
+    }
+    return o
+  },
+  z.object({
     prediction_outcome: z.enum(['HIT', 'MISS', 'NO_DATA']),
     capture_outcome: z.enum(['CAPTURED', 'NOT_CAPTURED', 'NOT_DISPATCHED', 'UNKNOWN']),
     score_v: z.number().int().min(0).max(100),
@@ -70,10 +111,10 @@ export const RetrospectiveOutputSchema = z
     summary_md: z.string().min(10),
     evidence_news_ids: z.array(z.string()),
     key_signals: z.array(z.string().max(60)),
-  })
-  .refine((o) => !(o.capture_outcome === 'CAPTURED' && o.prediction_outcome !== 'HIT'), {
+  }).refine((o) => !(o.capture_outcome === 'CAPTURED' && o.prediction_outcome !== 'HIT'), {
     message: 'CAPTURED implies prediction_outcome=HIT',
-  })
+  }),
+)
 
 export type RetrospectiveOutput = z.infer<typeof RetrospectiveOutputSchema>
 
