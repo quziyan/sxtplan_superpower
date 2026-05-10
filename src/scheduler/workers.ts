@@ -23,6 +23,7 @@ import { scheduleNewsIngestTick } from './workers/news-ingest'
 import { createNewsTriageWorker } from './workers/news-triage'
 import { createRefreshWorker } from './workers/refresh'
 import { createRetrospectiveWorker, scheduleRetrospectiveTick } from './workers/retrospective'
+import { scheduleLifecycleTick } from './workers/lifecycle-tick'
 
 const workers: Worker[] = []
 const intervals: ReturnType<typeof setInterval>[] = []
@@ -50,6 +51,8 @@ export async function startWorkers(): Promise<void> {
   console.log('[scheduler] auto-cancel tick scheduled (5m)')
   intervals.push(scheduleNewsIngestTick())
   console.log('[scheduler] news-ingest tick scheduled (15m default)')
+  intervals.push(scheduleLifecycleTick())
+  console.log('[scheduler] lifecycle tick scheduled (5m) — settle + expire')
   // 问题 #1:prediction-spawn 已弃用 — 预测必须从新闻提取(news-extract worker
   // 是 producer)。spawn 服务函数 + 路由仍保留作迁移期手动安全网,但 scheduler
   // 不再周期 tick 它。

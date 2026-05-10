@@ -79,4 +79,30 @@ describe('enqueueDispatch + requestCancel (mock adapter)', () => {
     await expect(enqueueDispatch(db, { predictionId: p.id, adapterKey: 'nope' }))
       .rejects.toThrow(/not registered/)
   })
+
+  // view-data-contract Inv-X2:dispatch-status-sync 闭合状态机
+  test('enqueueDispatch on APPROVED prediction transitions it to DISPATCHED', async () => {
+    const { db } = ctx
+    const p = await setup(db, `disp-sync-app-${Date.now()}`)
+    // 升级到 APPROVED(transitionLifecycle DISPATCHED 仅接受 APPROVED 来源)
+    await db.update(predictions).set({ status: 'APPROVED' }).where(sql`id = ${p.id}`)
+
+    await enqueueDispatch(db, { predictionId: p.id, adapterKey: 'mock' })
+
+    const [after] = await db.select({ status: predictions.status }).from(predictions).where(sql`id = ${p.id}`)
+    expect(after!.status).toBe('DISPATCHED')
+  })
+
+  test('enqueueDispatch on PROPOSED prediction (not APPROVED) silently keeps status', async () => {
+    const { db } = ctx
+    const p = await setup(db, `disp-sync-prop-${Date.now()}`)
+    // p.status defaults to PROPOSED. transitionLifecycle to DISPATCHED requires
+    // APPROVED — should silently no-op (transitionLifecycle returns null),
+    // dispatch_task itself still creates.
+    const task = await enqueueDispatch(db, { predictionId: p.id, adapterKey: 'mock' })
+    expect(task.state).toBe('SENT')
+
+    const [after] = await db.select({ status: predictions.status }).from(predictions).where(sql`id = ${p.id}`)
+    expect(after!.status).toBe('PROPOSED')
+  })
 })

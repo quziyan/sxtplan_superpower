@@ -1,6 +1,7 @@
 import { and, eq } from 'drizzle-orm'
 import type { Db } from '@/db/client'
 import { dispatchResults, dispatchTasks, type DispatchTask } from '@/db/schema/dispatch'
+import { transitionLifecycle } from '@/modules/prediction/service'
 import { getAdapter } from './adapter-pool'
 import { getDefaultAdapterKey } from './constants'
 import { canTransition, type DispatchState } from './state-machine'
@@ -47,6 +48,13 @@ export async function enqueueDispatch(db: Db, input: EnqueueDispatchInput): Prom
     sentAt: new Date(ack.acceptedAt),
     updatedAt: new Date(),
   }).where(eq(dispatchTasks.id, queued.id)).returning()
+
+  // 4. Sync prediction lifecycle: APPROVED → DISPATCHED.
+  //    幂等 — 若 prediction 已是 DISPATCHED/COMPLETED/EXPIRED 或 status 不在
+  //    ALLOWED_SOURCES['DISPATCHED'] = ['APPROVED'],transitionLifecycle 静默返回 null。
+  //    这是 view-data-contract 的 Inv-X2 关键执行点(状态机闭环)。
+  await transitionLifecycle(db, input.predictionId, 'DISPATCHED')
+
   return sent!
 }
 

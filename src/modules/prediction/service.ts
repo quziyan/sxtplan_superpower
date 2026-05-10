@@ -266,21 +266,30 @@ export async function getNewsEvidence(db: Db, predictionId: string): Promise<New
 
 export type StatusTransition = {
   predictionId: string
-  to: 'PROPOSED' | 'VALIDATED' | 'APPROVED' | 'REJECTED'
+  to: 'PROPOSED' | 'VALIDATED' | 'APPROVED' | 'REJECTED' | 'DISPATCHED' | 'COMPLETED' | 'EXPIRED'
 }
 
-// 状态机:
-//   PROPOSED → VALIDATED   (ANALYST 推送给决策者)
-//   PROPOSED → APPROVED    (BC: 决策者直接批准未推送提案)
-//   PROPOSED → REJECTED    (BC: 决策者直接驳回未推送提案)
-//   VALIDATED → APPROVED   (决策者批准已推送提案)
-//   VALIDATED → REJECTED   (决策者驳回已推送提案)
-//   VALIDATED → PROPOSED   (F:决策者打回重审,分析师可再次推送)
-const ALLOWED_SOURCES: Record<StatusTransition['to'], ReadonlyArray<'PROPOSED' | 'VALIDATED'>> = {
-  PROPOSED: ['VALIDATED'],
-  VALIDATED: ['PROPOSED'],
-  APPROVED: ['PROPOSED', 'VALIDATED'],
-  REJECTED: ['PROPOSED', 'VALIDATED'],
+// 状态机 — 7 个 status 全闭环:
+//   role-driven(用户操作):
+//     PROPOSED → VALIDATED   (ANALYST 推送给决策者)
+//     PROPOSED → APPROVED    (BC: 决策者直接批准未推送提案)
+//     PROPOSED → REJECTED    (BC: 决策者直接驳回未推送提案)
+//     VALIDATED → APPROVED   (决策者批准已推送提案)
+//     VALIDATED → REJECTED   (决策者驳回已推送提案)
+//     VALIDATED → PROPOSED   (F:决策者打回重审,分析师可再次推送)
+//   machine-driven(系统/worker 自动写入):
+//     APPROVED → DISPATCHED  (dispatch-status-sync:enqueueDispatch 成功后)
+//     DISPATCHED → COMPLETED (settle-tick:dispatch 有 CAPTURED outcome)
+//     {PROPOSED,VALIDATED,APPROVED,DISPATCHED} → EXPIRED (expire-tick:expires_at < now)
+type AllowedSourceStatus = 'PROPOSED' | 'VALIDATED' | 'APPROVED' | 'DISPATCHED'
+const ALLOWED_SOURCES: Record<StatusTransition['to'], ReadonlyArray<AllowedSourceStatus>> = {
+  PROPOSED:   ['VALIDATED'],
+  VALIDATED:  ['PROPOSED'],
+  APPROVED:   ['PROPOSED', 'VALIDATED'],
+  REJECTED:   ['PROPOSED', 'VALIDATED'],
+  DISPATCHED: ['APPROVED'],
+  COMPLETED:  ['DISPATCHED'],
+  EXPIRED:    ['PROPOSED', 'VALIDATED', 'APPROVED', 'DISPATCHED'],
 }
 
 export async function transitionStatus(db: Db, t: StatusTransition): Promise<Prediction> {
@@ -296,4 +305,25 @@ export async function transitionStatus(db: Db, t: StatusTransition): Promise<Pre
     throw new Error(`prediction ${t.predictionId} not in {${sources.join(',')}} or not found`)
   }
   return row
+}
+
+/**
+ * Lifecycle transition — machine-driven变体,不抛错。预测已在目标 status 或
+ * 来源 status 不在 ALLOWED_SOURCES 时,返回 null。给后台 worker 用,避免
+ * race condition 让幂等失败。
+ */
+export async function transitionLifecycle(
+  db: Db,
+  predictionId: string,
+  to: StatusTransition['to'],
+): Promise<Prediction | null> {
+  const sources = ALLOWED_SOURCES[to]
+  const [row] = await db.update(predictions)
+    .set({ status: to, updatedAt: new Date() })
+    .where(and(
+      eq(predictions.id, predictionId),
+      inArray(predictions.status, sources as unknown as Prediction['status'][]),
+    ))
+    .returning()
+  return row ?? null
 }
