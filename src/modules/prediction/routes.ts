@@ -13,6 +13,7 @@ import { dispatchTasks, mediaAssets, type DispatchTask, type MediaAsset } from '
 import { requestCancel } from '@/dispatch/service'
 import { writeConfidenceSnapshot } from './confidence'
 import { getPrediction, getSnapshots, getNewsEvidence, getNewsByIds, listPredictions, transitionStatus } from './service'
+import { ensureCoverageForWatchlist, ensureCoverageForAll, totalize } from './spawner'
 
 const manualConfSchema = z.object({
   confidence: z.number().int().min(0).max(100),
@@ -169,6 +170,41 @@ export function predictionRoutes(db: Db, deps: PredictionRouteDeps = {}) {
     await logAudit(db, validateEntry)
     return c.json({ ok: true, prediction: after })
   })
+
+  // 预测自动/手动生产 — 对单个 watchlist 或全体 active watchlist 在
+  // 未来 [today, today+coverageDays] 的每个 (windowDate, AM/PM) 确保有
+  // 一行 PROPOSED prediction(幂等)。详见 ./spawner.ts。
+  const spawnSchema = z.object({
+    coverageDays: z.number().int().min(1).max(30).optional(),
+  })
+  app.post('/spawn-from-watchlist/:id', authRequired(db),
+    roleRequired('ANALYST'),
+    zValidator('json', spawnSchema),
+    async (c) => {
+      const id = c.req.param('id')
+      const body = c.req.valid('json')
+      const opts: import('./spawner').SpawnOpts =
+        body.coverageDays !== undefined ? { coverageDays: body.coverageDays } : {}
+      try {
+        const r = await ensureCoverageForWatchlist(db, id, opts)
+        return c.json({ ok: true, ...r })
+      } catch (err) {
+        throw NotFound((err as Error).message)
+      }
+    },
+  )
+  app.post('/spawn-from-all', authRequired(db),
+    roleRequired('ANALYST'),
+    zValidator('json', spawnSchema),
+    async (c) => {
+      const body = c.req.valid('json')
+      const opts: import('./spawner').SpawnOpts =
+        body.coverageDays !== undefined ? { coverageDays: body.coverageDays } : {}
+      const results = await ensureCoverageForAll(db, opts)
+      const totals = totalize(results)
+      return c.json({ ok: true, ...totals, results })
+    },
+  )
 
   app.post('/:id/manual-confidence', authRequired(db), roleRequired('ANALYST'), zValidator('json', manualConfSchema), async (c) => {
     const auth = c.get('auth')

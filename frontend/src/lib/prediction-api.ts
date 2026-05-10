@@ -141,6 +141,21 @@ export async function setManualConfidence(
   })
 }
 
+// 预测自动/手动生产 — 对所有 active watchlist 在未来 N 天内确保 PROPOSED 预测覆盖
+export type SpawnAllResult = {
+  ok: boolean
+  totalSpawned: number
+  totalSkipped: number
+  watchlistsProcessed: number
+  results: Array<{ watchlistId: string; watchlistName: string; spawned: number; skipped: number }>
+}
+export async function spawnFromAllWatchlists(coverageDays?: number): Promise<SpawnAllResult> {
+  return api<SpawnAllResult>('/predictions/spawn-from-all', {
+    method: 'POST',
+    body: JSON.stringify(coverageDays !== undefined ? { coverageDays } : {}),
+  })
+}
+
 export async function recomputeNow(id: string): Promise<{ ok: boolean; mode: 'FULL' | 'INCR'; message: string }> {
   // m5 G5: 后端 recompute-now 改为真触发 fullRecalcQueue + manualTrigger=true (P5)
   // 返回 { ok, mode: 'FULL', message } —— 默认 FULL P5 模式

@@ -6,7 +6,7 @@ import { listTaskCards, type TaskCard } from '@/lib/taskcard-api'
 import { listVehicleClasses, listTaskClasses, type VehicleClass, type TaskClass } from '@/lib/taxonomy-api'
 import { listRegions, type RegionListItem } from '@/lib/region-api'
 import { getNewsFreshnessDays, setNewsFreshnessDays } from '@/lib/settings-api'
-import { recomputeNow } from '@/lib/prediction-api'
+import { recomputeNow, spawnFromAllWatchlists } from '@/lib/prediction-api'
 import { NewWatchListModal } from './NewWatchListModal'
 import { NewTaskCardModal } from './NewTaskCardModal'
 
@@ -30,6 +30,9 @@ export function AnalystView({ onOpenPrediction }: { onOpenPrediction?: (id: stri
     { done: number; total: number; currentId: string | null; failed: number; finished?: boolean }
     | null
   >(null)
+  // 预测生产状态:'spawning' | { done: bool, message: string } | null
+  const [spawning, setSpawning] = useState(false)
+  const [spawnFlash, setSpawnFlash] = useState<string | null>(null)
 
   // Refetch watchlists after a new one is created via the modal. Predictions
   // don't change when a watchlist is created (no signals attached yet) so we
@@ -98,6 +101,26 @@ export function AnalystView({ onOpenPrediction }: { onOpenPrediction?: (id: stri
       } catch (e) { console.error(e) }
       setTimeout(() => setBatchProgress(null), 4000)
     }, 12_000)
+  }
+
+  // 手动触发预测生产 — 对所有 active watchlist 在未来 7 天内确保 PROPOSED 覆盖
+  const onSpawnAll = async () => {
+    if (spawning) return
+    setSpawning(true)
+    setSpawnFlash(null)
+    try {
+      const r = await spawnFromAllWatchlists(7)
+      setSpawnFlash(`✓ 已生产 ${r.totalSpawned} 条新预测(跳过 ${r.totalSkipped} 已存在),覆盖 ${r.watchlistsProcessed} 个 watchlist`)
+      // 刷新列表
+      const fresh = await listPredictions({ status: 'PROPOSED', limit: 100, includeLatestSnapshot: true })
+      setPredictions(fresh)
+      setTimeout(() => setSpawnFlash(null), 8000)
+    } catch (e) {
+      setSpawnFlash('✗ ' + (e as Error).message)
+      setTimeout(() => setSpawnFlash(null), 8000)
+    } finally {
+      setSpawning(false)
+    }
   }
 
   const onSaveFreshness = async () => {
@@ -249,6 +272,9 @@ export function AnalystView({ onOpenPrediction }: { onOpenPrediction?: (id: stri
                 {freshnessSaving ? '保存中…' : '保存'}
               </Btn>
             </span>
+            <Btn disabled={spawning} onClick={onSpawnAll}>
+              📡 {spawning ? '生产中…' : '生成预测'}
+            </Btn>
             <Btn
               disabled={batchProgress !== null && !batchProgress.finished || filtered.length === 0}
               onClick={onBatchRecompute}
@@ -261,6 +287,16 @@ export function AnalystView({ onOpenPrediction }: { onOpenPrediction?: (id: stri
           </>}
         />
         <div className="workspace__body">
+          {spawnFlash && (
+            <div style={{
+              marginBottom: 'var(--sp-3)', padding: 'var(--sp-2) var(--sp-3)',
+              background: spawnFlash.startsWith('✓') ? 'var(--c-ok-soft, rgba(34,197,94,0.12))' : 'var(--c-bad-soft, rgba(239,68,68,0.12))',
+              color: spawnFlash.startsWith('✓') ? 'var(--c-ok)' : 'var(--c-bad)',
+              borderRadius: 6, fontSize: 'var(--fs-2)',
+            }}>
+              {spawnFlash}
+            </div>
+          )}
           {batchProgress && (
             <div style={{
               marginBottom: 'var(--sp-4)', padding: 'var(--sp-3) var(--sp-4)',
