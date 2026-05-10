@@ -91,10 +91,10 @@ prediction 该出现在哪个视图,也没有跨视图一致性测试**。新功
 
 | 不一致 | 优先级 | 本 spec 中的处置 |
 |---|---|---|
-| Analyst 漏 `hasEvidence: true` | P1 | **已修(本 commit)** |
-| PROPOSED 过期没人改为 EXPIRED | P0 | 待补 `expire-tick` worker |
-| APPROVED 派单后没人改为 DISPATCHED | P0 | 待补 `dispatch-status-sync` worker(integrate `triggerDispatchAfterApproval`) |
-| DISPATCHED 出勤完成后没人改为 COMPLETED | P0 | 待补 `settle-tick` worker(整合 retrospective worker 入口) |
+| Analyst 漏 `hasEvidence: true` | P1 | **已修(commit `b50521d`)** |
+| PROPOSED/VALIDATED/APPROVED/DISPATCHED 过期没人改为 EXPIRED | P0 | **已修(commit `dbff0be`)** — `lifecycle-tick` worker scheduled 5min |
+| APPROVED 派单后没人改为 DISPATCHED | P0 | **已修(commit `dbff0be`)** — `enqueueDispatch` 内联 `transitionLifecycle` |
+| DISPATCHED 出勤完成后没人改为 COMPLETED | P0 | **已修(commit `dbff0be`)** — `lifecycle-tick` 扫 dispatch_tasks 终态翻 prediction |
 | Schedule 不过滤 status 是设计意图 | P2 | **已文档化(本 spec)** |
 
 ## Acceptance(本 spec 的验收)
