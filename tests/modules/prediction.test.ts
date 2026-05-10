@@ -481,6 +481,100 @@ describe('prediction routes', () => {
     const body = await res.json() as { prediction: { status: string } }
     expect(body.prediction.status).toBe('REJECTED')
   })
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // F:DECIDER 「打回重审」VALIDATED → PROPOSED + 批量
+  // ─────────────────────────────────────────────────────────────────────────
+  test('POST /:id/send-back requires DECIDER (ANALYST → 401)', async () => {
+    const id = await seedValidatePrediction('sendback-analyst')
+    await app.request(`/predictions/${id}/validate`, {
+      method: 'POST', headers: { cookie: analystCookie },
+    })
+    const res = await app.request(`/predictions/${id}/send-back`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', cookie: analystCookie },
+      body: JSON.stringify({ reason: '证据不足请补充' }),
+    })
+    expect(res.status).toBe(401)
+  })
+
+  test('POST /:id/send-back DECIDER on VALIDATED → PROPOSED (200)', async () => {
+    const id = await seedValidatePrediction('sendback-ok')
+    await app.request(`/predictions/${id}/validate`, {
+      method: 'POST', headers: { cookie: analystCookie },
+    })
+    const res = await app.request(`/predictions/${id}/send-back`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', cookie: deciderCookie },
+      body: JSON.stringify({ reason: '证据不足请补充新闻' }),
+    })
+    expect(res.status).toBe(200)
+    const body = await res.json() as { prediction: { status: string } }
+    expect(body.prediction.status).toBe('PROPOSED')
+  })
+
+  test('POST /:id/send-back reason 太短 → 400', async () => {
+    const id = await seedValidatePrediction('sendback-short')
+    await app.request(`/predictions/${id}/validate`, {
+      method: 'POST', headers: { cookie: analystCookie },
+    })
+    const res = await app.request(`/predictions/${id}/send-back`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', cookie: deciderCookie },
+      body: JSON.stringify({ reason: '差' }),  // 1 字 < 4 阈值
+    })
+    expect(res.status).toBe(400)
+  })
+
+  test('打回后可重新走流程:PROPOSED → VALIDATED 再次允许', async () => {
+    const id = await seedValidatePrediction('sendback-loop')
+    // 推 → 打回 → 再推
+    await app.request(`/predictions/${id}/validate`, {
+      method: 'POST', headers: { cookie: analystCookie },
+    })
+    await app.request(`/predictions/${id}/send-back`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', cookie: deciderCookie },
+      body: JSON.stringify({ reason: '证据不足请补充' }),
+    })
+    const res = await app.request(`/predictions/${id}/validate`, {
+      method: 'POST', headers: { cookie: analystCookie },
+    })
+    expect(res.status).toBe(200)
+    const body = await res.json() as { prediction: { status: string } }
+    expect(body.prediction.status).toBe('VALIDATED')
+  })
+
+  test('send-back 写 audit 行 action=send_back + reason', async () => {
+    const id = await seedValidatePrediction('sendback-audit')
+    await app.request(`/predictions/${id}/validate`, {
+      method: 'POST', headers: { cookie: analystCookie },
+    })
+    await app.request(`/predictions/${id}/send-back`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', cookie: deciderCookie },
+      body: JSON.stringify({ reason: '证据不足请补充新闻' }),
+    })
+    const audits = await ctx.db.select().from(operationAudit)
+      .where(and(
+        eq(operationAudit.targetId, id),
+        eq(operationAudit.action, 'send_back'),
+      ))
+      .orderBy(desc(operationAudit.occurredAt))
+    expect(audits.length).toBeGreaterThanOrEqual(1)
+    expect(audits[0]!.reason).toBe('证据不足请补充新闻')
+  })
+
+  test('send-back PROPOSED(未推送)→ 500(只能从 VALIDATED 起步)', async () => {
+    const id = await seedValidatePrediction('sendback-from-proposed')
+    // 不调 validate,直接 send-back
+    const res = await app.request(`/predictions/${id}/send-back`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', cookie: deciderCookie },
+      body: JSON.stringify({ reason: '证据不足请补充新闻' }),
+    })
+    expect(res.status).toBe(500)
+  })
 })
 
 /**

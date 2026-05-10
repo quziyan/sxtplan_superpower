@@ -199,7 +199,7 @@ export async function getNewsEvidence(db: Db, predictionId: string): Promise<New
 
 export type StatusTransition = {
   predictionId: string
-  to: 'VALIDATED' | 'APPROVED' | 'REJECTED'
+  to: 'PROPOSED' | 'VALIDATED' | 'APPROVED' | 'REJECTED'
 }
 
 // 状态机:
@@ -208,7 +208,9 @@ export type StatusTransition = {
 //   PROPOSED → REJECTED    (BC: 决策者直接驳回未推送提案)
 //   VALIDATED → APPROVED   (决策者批准已推送提案)
 //   VALIDATED → REJECTED   (决策者驳回已推送提案)
+//   VALIDATED → PROPOSED   (F:决策者打回重审,分析师可再次推送)
 const ALLOWED_SOURCES: Record<StatusTransition['to'], ReadonlyArray<'PROPOSED' | 'VALIDATED'>> = {
+  PROPOSED: ['VALIDATED'],
   VALIDATED: ['PROPOSED'],
   APPROVED: ['PROPOSED', 'VALIDATED'],
   REJECTED: ['PROPOSED', 'VALIDATED'],

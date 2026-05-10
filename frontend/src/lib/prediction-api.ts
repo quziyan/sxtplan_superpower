@@ -126,6 +126,13 @@ export async function validatePrediction(id: string): Promise<{ ok: boolean; pre
   return api<{ ok: boolean; prediction: Prediction }>(`/predictions/${id}/validate`, { method: 'POST', body: '{}' })
 }
 
+// F:DECIDER 把 VALIDATED 打回 → PROPOSED,reason 必须 ≥ 4 字
+export async function sendBackPrediction(id: string, reason: string): Promise<{ ok: boolean; prediction: Prediction }> {
+  return api<{ ok: boolean; prediction: Prediction }>(`/predictions/${id}/send-back`, {
+    method: 'POST', body: JSON.stringify({ reason }),
+  })
+}
+
 export async function rejectPrediction(id: string, reason?: string): Promise<{ ok: boolean; prediction: Prediction }> {
   return api<{ ok: boolean; prediction: Prediction }>(`/predictions/${id}/reject`, {
     method: 'POST', body: JSON.stringify({ reason: reason ?? '' }),

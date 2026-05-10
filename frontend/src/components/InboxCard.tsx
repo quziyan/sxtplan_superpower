@@ -15,10 +15,11 @@ export type InboxItem = {
   reasoning?: string  // 1 句简评(m3 接 latest snapshot.reasoning)
 }
 
-export function InboxCard({ item, onApprove, onReject, onDetail }: {
+export function InboxCard({ item, onApprove, onReject, onSendBack, onDetail }: {
   item: InboxItem
   onApprove?: (id: string) => void
   onReject?: (id: string) => void
+  onSendBack?: (id: string) => void
   onDetail?: (id: string) => void
 }) {
   return (
@@ -62,6 +63,9 @@ export function InboxCard({ item, onApprove, onReject, onDetail }: {
       <div className="inbox-card__actions">
         <Btn variant="ok" onClick={() => onApprove?.(item.id)}>批准</Btn>
         <Btn variant="danger" onClick={() => onReject?.(item.id)}>驳回</Btn>
+        {onSendBack && (
+          <Btn onClick={() => onSendBack(item.id)}>↩ 打回</Btn>
+        )}
         <Btn variant="ghost" size="sm" onClick={() => onDetail?.(item.id)}>详情</Btn>
       </div>
     </div>

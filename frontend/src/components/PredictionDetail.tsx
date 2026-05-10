@@ -8,6 +8,7 @@ import { Btn } from './Btn'
 import {
   approvePrediction,
   validatePrediction,
+  sendBackPrediction,
   getPredictionDetail,
   recomputeNow,
   rejectPrediction,
@@ -107,6 +108,21 @@ export function PredictionDetail({
     setBusy(true)
     try {
       await validatePrediction(p.id)
+      await refetch()
+      onMutated?.()
+    } catch (e) {
+      setError((e as Error).message)
+    } finally {
+      setBusy(false)
+    }
+  }
+  // F:DECIDER 打回 VALIDATED → PROPOSED,要 reason ≥ 4 字
+  const onSendBack = async () => {
+    const reason = window.prompt('打回重审原因(≥ 4 字):', '证据不足,请补充新闻或调整置信度后重新推送')
+    if (!reason || reason.trim().length < 4) return
+    setBusy(true)
+    try {
+      await sendBackPrediction(p.id, reason)
       await refetch()
       onMutated?.()
     } catch (e) {
@@ -228,6 +244,9 @@ export function PredictionDetail({
           <>
             <Btn variant="ok" disabled={busy || recomputing === 'pending'} onClick={onApprove}>批准</Btn>
             <Btn variant="danger" disabled={busy || recomputing === 'pending'} onClick={onReject}>驳回</Btn>
+            {p.status === 'VALIDATED' && (
+              <Btn disabled={busy || recomputing === 'pending'} onClick={onSendBack}>↩ 打回重审</Btn>
+            )}
           </>
         )}
         {p.status === 'PROPOSED' && activeRole !== 'DECIDER' && activeRole !== 'ANALYST' && (

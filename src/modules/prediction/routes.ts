@@ -153,6 +153,28 @@ export function predictionRoutes(db: Db, deps: PredictionRouteDeps = {}) {
     return c.json({ ok: true, prediction: after })
   })
 
+  // F:决策者「打回重审」VALIDATED → PROPOSED,分析师可重新审完再推。reason 必须 ≥ 4 字。
+  app.post('/:id/send-back', authRequired(db),
+    roleRequired('DECIDER'),
+    zValidator('json', z.object({ reason: z.string().min(4).max(500) })),
+    async (c) => {
+      const auth = c.get('auth')
+      const id = c.req.param('id')
+      const before = await getPrediction(db, id)
+      if (!before) throw NotFound(`prediction ${id} not found`)
+      const after = await transitionStatus(db, { predictionId: id, to: 'PROPOSED' })
+      const sendBackEntry: import('@/audit/log').AuditEntry = {
+        actorUserId: auth.user.id,
+        targetKind: 'prediction', targetId: id, action: 'send_back',
+        before: { status: before.status }, after: { status: after.status },
+        reason: c.req.valid('json').reason,
+      }
+      if (auth.activeRoleKey !== null) sendBackEntry.actorRoleKey = auth.activeRoleKey
+      await logAudit(db, sendBackEntry)
+      return c.json({ ok: true, prediction: after })
+    },
+  )
+
   // (β) m5 UI 对齐:ANALYST 把 PROPOSED 推送到 VALIDATED,DECIDER 工作台只看 VALIDATED。
   // 状态机 PROPOSED → VALIDATED;BC 保留 PROPOSED → APPROVED/REJECTED 路径。
   app.post('/:id/validate', authRequired(db), roleRequired('ANALYST'), async (c) => {
