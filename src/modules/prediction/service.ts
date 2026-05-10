@@ -7,6 +7,9 @@ import {
   type ConfidenceSnapshot,
   type Prediction,
 } from '@/db/schema/prediction'
+import { vehicleClasses, taskClasses } from '@/db/schema/taxonomy'
+import { regions } from '@/db/schema/region'
+import { watchLists, taskCards } from '@/db/schema/watchlist'
 
 export type ListPredictionsOpts = {
   status?: 'PROPOSED' | 'APPROVED' | 'REJECTED' | 'DISPATCHED' | 'EXPIRED' | 'COMPLETED'
@@ -29,6 +32,19 @@ export type ListPredictionsOpts = {
    */
   from?: string
   to?: string
+  /**
+   * Schedule tab: 内联 V/T/region/source 名称,日历各视图无需 N+1 反查。
+   * 启用时给每行加 vehicleClassName / taskClassName / regionName / sourceName。
+   */
+  includeNames?: boolean
+}
+
+export type PredictionNames = {
+  vehicleClassName: string
+  taskClassName: string
+  regionName: string | null
+  /** WATCHLIST source → watchlist.name;TASKCARD source → taskcard.name;null = 找不到 */
+  sourceName: string | null
 }
 
 /**
@@ -46,7 +62,7 @@ export type LatestSnapshotSummary = {
 
 export type PredictionListItem = Prediction & {
   latestSnapshot?: LatestSnapshotSummary | null
-}
+} & Partial<PredictionNames>
 
 export async function listPredictions(
   db: Db,
@@ -66,10 +82,10 @@ export async function listPredictions(
       LIMIT ${limit}
     `)
     const rows = rawRows as unknown as Prediction[]
-    if (!opts.includeLatestSnapshot || rows.length === 0) {
-      return rows
-    }
-    return attachLatestSnapshots(db, rows)
+    let out: PredictionListItem[] = rows
+    if (opts.includeLatestSnapshot && rows.length > 0) out = await attachLatestSnapshots(db, rows)
+    if (opts.includeNames && out.length > 0) out = await attachNames(db, out)
+    return out
   }
   const clauses = []
   if (opts.status) clauses.push(eq(predictions.status, opts.status))
@@ -88,10 +104,45 @@ export async function listPredictions(
         .orderBy(sql`${predictions.createdAt} DESC`)
         .limit(limit)
 
-  if (!opts.includeLatestSnapshot || rows.length === 0) {
-    return rows
-  }
-  return attachLatestSnapshots(db, rows)
+  let out: PredictionListItem[] = rows
+  if (opts.includeLatestSnapshot && rows.length > 0) out = await attachLatestSnapshots(db, rows)
+  if (opts.includeNames && out.length > 0) out = await attachNames(db, out)
+  return out
+}
+
+/**
+ * Schedule tab 批量 enrich — 一次 IN(...) 拉 V/T/region/watchlist+taskcard,
+ * 用 Map 合并;避免日历视图按行 N+1 反查。
+ */
+async function attachNames(db: Db, rows: PredictionListItem[]): Promise<PredictionListItem[]> {
+  const vIds = Array.from(new Set(rows.map((r) => r.vehicleClassId)))
+  const tIds = Array.from(new Set(rows.map((r) => r.taskClassId)))
+  const rIds = Array.from(new Set(rows.map((r) => r.regionId)))
+  const wlIds = Array.from(new Set(rows.filter((r) => r.sourceKind === 'WATCHLIST').map((r) => r.sourceId)))
+  const tcIds = Array.from(new Set(rows.filter((r) => r.sourceKind === 'TASKCARD').map((r) => r.sourceId)))
+
+  const [vs, ts, rs, wls, tcs] = await Promise.all([
+    vIds.length > 0 ? db.select({ id: vehicleClasses.id, name: vehicleClasses.name }).from(vehicleClasses).where(inArray(vehicleClasses.id, vIds)) : Promise.resolve([]),
+    tIds.length > 0 ? db.select({ id: taskClasses.id, name: taskClasses.name }).from(taskClasses).where(inArray(taskClasses.id, tIds)) : Promise.resolve([]),
+    rIds.length > 0 ? db.select({ id: regions.id, name: regions.name }).from(regions).where(inArray(regions.id, rIds)) : Promise.resolve([]),
+    wlIds.length > 0 ? db.select({ id: watchLists.id, name: watchLists.name }).from(watchLists).where(inArray(watchLists.id, wlIds)) : Promise.resolve([]),
+    tcIds.length > 0 ? db.select({ id: taskCards.id, name: taskCards.name }).from(taskCards).where(inArray(taskCards.id, tcIds)) : Promise.resolve([]),
+  ])
+  const vMap = new Map(vs.map((x) => [x.id, x.name]))
+  const tMap = new Map(ts.map((x) => [x.id, x.name]))
+  const rMap = new Map(rs.map((x) => [x.id, x.name]))
+  const wlMap = new Map(wls.map((x) => [x.id, x.name]))
+  const tcMap = new Map(tcs.map((x) => [x.id, x.name]))
+
+  return rows.map((r) => ({
+    ...r,
+    vehicleClassName: vMap.get(r.vehicleClassId) ?? '(未知车类)',
+    taskClassName: tMap.get(r.taskClassId) ?? '(未知任务)',
+    regionName: rMap.get(r.regionId) ?? null,
+    sourceName: r.sourceKind === 'WATCHLIST'
+      ? (wlMap.get(r.sourceId) ?? null)
+      : (tcMap.get(r.sourceId) ?? null),
+  }))
 }
 
 async function attachLatestSnapshots(db: Db, rows: Prediction[]): Promise<PredictionListItem[]> {

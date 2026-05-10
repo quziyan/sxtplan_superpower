@@ -1,11 +1,11 @@
 import { useEffect, useState } from 'react'
-import { PageHeader } from '@/components/PageHeader'
 import { StageLegend } from '@/components/StageLegend'
 import { Btn } from '@/components/Btn'
 import { useScheduleData } from './useScheduleData'
 import { MonthView } from './MonthView'
 import { WeekView } from './WeekView'
 import { DayView } from './DayView'
+import { bigDateLabel } from './dateUtils'
 
 type SubTab = 'month' | 'week' | 'day'
 
@@ -45,7 +45,23 @@ export function ScheduleView({ onOpenPrediction, mutationVersion }: {
       display: 'flex', flexDirection: 'column',
       height: '100%', minHeight: 0,
     }}>
-      <PageHeader title="日程" sub="全局视图 · 跨角色 prediction 时间分布" />
+      <div style={{
+        padding: 'var(--sp-5) var(--sp-4) var(--sp-3)',
+        display: 'flex', alignItems: 'baseline', gap: 'var(--sp-4)', flexWrap: 'wrap',
+      }}>
+        <div style={{
+          fontSize: 36,
+          fontWeight: 600,
+          fontVariantNumeric: 'tabular-nums',
+          letterSpacing: 0.5,
+          color: 'var(--c-text)',
+        }}>
+          {bigDateLabel(new Date())}
+        </div>
+        <div style={{ fontSize: 13, color: 'var(--c-text-3)' }}>
+          日程 · 全局视图 · 跨角色 prediction 时间分布
+        </div>
+      </div>
       <div style={{
         display: 'flex', gap: 'var(--sp-3)', alignItems: 'center',
         padding: '0 var(--sp-4) var(--sp-3)',

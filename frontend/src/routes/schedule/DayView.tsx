@@ -3,7 +3,7 @@ import { Btn } from '@/components/Btn'
 import { Status } from '@/components/Status'
 import { ConfBar } from '@/components/ConfBar'
 import type { PredictionListItem } from '@/lib/prediction-api'
-import { formatYmd } from './dateUtils'
+import { formatYmd, predictionDisplayName } from './dateUtils'
 
 /**
  * 单日视图 — AM section 左 / PM section 右,各自纵向 prediction 列表。
@@ -60,6 +60,15 @@ function Section({ title, items, onOpen }: {
 
 function Row({ p, onOpen }: { p: PredictionListItem; onOpen: (id: string) => void }) {
   const colorVar = `var(--c-stage-${p.status.toLowerCase()})`
+  const name = predictionDisplayName(p)
+  // 副标题:车类 · 任务 · 区域(若有)— V/T 已经体现在 sourceName 里时省略,
+  // 但补 region 信息对调度判断有用。
+  const subParts: string[] = []
+  if (p.vehicleClassName && p.taskClassName && p.sourceName && p.sourceName !== `${p.vehicleClassName} · ${p.taskClassName}`) {
+    subParts.push(`${p.vehicleClassName} · ${p.taskClassName}`)
+  }
+  if (p.regionName) subParts.push(p.regionName)
+  subParts.push(`K=${p.kDays}`)
   return (
     <button
       type="button"
@@ -82,10 +91,13 @@ function Row({ p, onOpen }: { p: PredictionListItem; onOpen: (id: string) => voi
         borderTopLeftRadius: 3,
         borderBottomLeftRadius: 3,
       }} />
-      <div>
-        <div style={{ fontSize: 13, fontFamily: 'var(--ff-mono)' }}>{p.id.slice(0, 8)}</div>
+      <div style={{ minWidth: 0 }}>
+        <div style={{
+          fontSize: 13, fontWeight: 500,
+          whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+        }}>{name}</div>
         <div style={{ fontSize: 11, color: 'var(--c-text-3)', marginTop: 2 }}>
-          {p.sourceKind} · {p.sourceId.slice(0, 8)} · K={p.kDays}
+          {subParts.join(' · ')}
         </div>
       </div>
       <ConfBar value={p.confidenceNow} />

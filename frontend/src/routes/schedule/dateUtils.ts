@@ -62,3 +62,22 @@ export const WEEKDAYS_ZH = ['一', '二', '三', '四', '五', '六', '日'] as 
 export function weekdayLabel(d: Date): string {
   return WEEKDAYS_ZH[mondayIndex(d)]!
 }
+
+// 大字日期 — Schedule 标题栏。中文长格式 + 周X 后缀。
+export function bigDateLabel(d: Date): string {
+  return `${d.getFullYear()} 年 ${d.getMonth() + 1} 月 ${d.getDate()} 日 · 周${weekdayLabel(d)}`
+}
+
+// 预测任务的显示名 — 优先 watchlist/taskcard.name,fallback V·T。
+// 用于月/周/日视图的条目主标签,跨视图保持一致。
+export function predictionDisplayName(p: {
+  sourceName?: string | null
+  vehicleClassName?: string
+  taskClassName?: string
+}): string {
+  if (p.sourceName) return p.sourceName
+  const v = p.vehicleClassName ?? ''
+  const t = p.taskClassName ?? ''
+  if (v && t) return `${v} · ${t}`
+  return v || t || '(未命名)'
+}

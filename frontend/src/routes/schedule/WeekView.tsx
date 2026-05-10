@@ -2,7 +2,7 @@ import { useMemo, Fragment } from 'react'
 import { Btn } from '@/components/Btn'
 import { StageChip } from '@/components/StageChip'
 import type { PredictionListItem } from '@/lib/prediction-api'
-import { formatYmd, sameDay, weekRange } from './dateUtils'
+import { formatYmd, predictionDisplayName, sameDay, weekRange } from './dateUtils'
 
 /**
  * 7 列(周一-周日) × 2 行(AM / PM)半天网格。每格内是 StageChip 列表,
@@ -83,8 +83,8 @@ export function WeekView({ data, anchor, onAnchor, onOpen }: {
                   {items.map((p) => (
                     <StageChip key={p.id}
                       status={p.status}
-                      label={`置信 ${p.confidenceNow}`}
-                      sub={p.id.slice(0, 8)}
+                      label={predictionDisplayName(p)}
+                      sub={`置信 ${p.confidenceNow}`}
                       onClick={() => onOpen(p.id)}
                     />
                   ))}

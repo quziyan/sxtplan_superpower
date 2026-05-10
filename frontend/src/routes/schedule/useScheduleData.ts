@@ -34,6 +34,7 @@ export function useScheduleData(anchor: Date, mutationVersion: number): Schedule
       to: formatYmd(end),
       limit: 500,
       includeLatestSnapshot: true,
+      includeNames: true,
     })
       .then((rows) => { if (!cancelled) setPredictions(rows) })
       .catch((e: Error) => { if (!cancelled) setError(e.message) })

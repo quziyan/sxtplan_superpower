@@ -2,7 +2,7 @@ import { useMemo } from 'react'
 import { Btn } from '@/components/Btn'
 import { StageDot } from '@/components/StageDot'
 import type { PredictionListItem } from '@/lib/prediction-api'
-import { formatYmd, monthGridRange, sameDay, weekdayLabel } from './dateUtils'
+import { formatYmd, monthGridRange, predictionDisplayName, sameDay, weekdayLabel } from './dateUtils'
 
 /**
  * 6 行 × 7 列日历,周一为周首。每格右上数字 = 当日 prediction 数,
@@ -84,16 +84,35 @@ export function MonthView({ data, anchor, onAnchor, onOpen }: {
                   }}>{items.length}</span>
                 )}
               </div>
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 3 }}>
-                {items.map((p) => (
-                  <button key={p.id}
-                    onClick={() => onOpen(p.id)}
-                    title={`${p.windowHalf} · ${p.status} · 置信 ${p.confidenceNow}`}
-                    style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer' }}
-                    aria-label={`${weekdayLabel(day)} ${p.status}`}>
-                    <StageDot status={p.status} />
-                  </button>
-                ))}
+              {/* 月视图密度高,每天单元格只能容纳少量条目;按"名称 + dot"行渲染前几条,
+                  超出折叠为 +N 数字。名称鼠标悬停展现完整(title attr)。 */}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                {items.slice(0, 4).map((p) => {
+                  const name = predictionDisplayName(p)
+                  return (
+                    <button key={p.id}
+                      onClick={() => onOpen(p.id)}
+                      title={`${name} · ${p.windowHalf} · ${p.status} · 置信 ${p.confidenceNow}`}
+                      style={{
+                        display: 'flex', alignItems: 'center', gap: 4,
+                        background: 'none', border: 'none', padding: 0, cursor: 'pointer',
+                        color: 'inherit', textAlign: 'left', width: '100%',
+                      }}
+                      aria-label={`${weekdayLabel(day)} ${name} ${p.status}`}>
+                      <StageDot status={p.status} size={7} />
+                      <span style={{
+                        fontSize: 10,
+                        whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+                        flex: 1, lineHeight: 1.3,
+                      }}>{name}</span>
+                    </button>
+                  )
+                })}
+                {items.length > 4 && (
+                  <div style={{ fontSize: 10, color: 'var(--c-text-3)', paddingLeft: 11 }}>
+                    +{items.length - 4} 更多
+                  </div>
+                )}
               </div>
             </div>
           )

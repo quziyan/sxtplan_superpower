@@ -42,9 +42,17 @@ export type LatestSnapshotSummary = {
   kind: 'INCR' | 'FULL' | 'MANUAL'
 }
 
+// Schedule tab:?include=names 时后端 inline 名称,日历视图直接显示。
+export type PredictionNames = {
+  vehicleClassName?: string
+  taskClassName?: string
+  regionName?: string | null
+  sourceName?: string | null
+}
+
 export type PredictionListItem = Prediction & {
   latestSnapshot?: LatestSnapshotSummary | null
-}
+} & PredictionNames
 
 export type ConfidenceSnapshot = {
   id: string
@@ -64,6 +72,7 @@ export async function listPredictions(
     status?: PredictionStatus
     limit?: number
     includeLatestSnapshot?: boolean
+    includeNames?: boolean
     hasEvidence?: boolean
     /** Schedule tab: windowDate ≥ from (YYYY-MM-DD) */
     from?: string
@@ -74,10 +83,12 @@ export async function listPredictions(
   const params = new URLSearchParams()
   if (opts.status) params.set('status', opts.status)
   if (opts.limit !== undefined) params.set('limit', String(opts.limit))
-  // Plan-C T33 / ISC-41: comma-separated `include` token list. Today only
-  // `latest_snapshot` is supported; future flags can be appended without
-  // breaking the contract.
-  if (opts.includeLatestSnapshot) params.set('include', 'latest_snapshot')
+  // Plan-C T33 / ISC-41: comma-separated `include` token list. Schedule tab
+  // adds `names` for inline V/T/region/source names; both tokens compose.
+  const includeTokens: string[] = []
+  if (opts.includeLatestSnapshot) includeTokens.push('latest_snapshot')
+  if (opts.includeNames) includeTokens.push('names')
+  if (includeTokens.length > 0) params.set('include', includeTokens.join(','))
   // m5 UI: 过滤无证据 prediction(分析师 proposal 列表只看 actionable 的)
   if (opts.hasEvidence) params.set('has_evidence', 'true')
   if (opts.from) params.set('from', opts.from)

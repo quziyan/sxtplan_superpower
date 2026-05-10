@@ -52,6 +52,8 @@ export function predictionRoutes(db: Db, deps: PredictionRouteDeps = {}) {
     const includeRaw = c.req.query('include') ?? ''
     const includeTokens = includeRaw.split(',').map((t) => t.trim()).filter(Boolean)
     const includeLatestSnapshot = includeTokens.includes('latest_snapshot')
+    // Schedule tab: include=names → inline V/T/region/source names
+    const includeNames = includeTokens.includes('names')
     // m5 UI:?has_evidence=true 只返回有证据的 prediction
     const hasEvidence = c.req.query('has_evidence') === 'true'
     // Schedule tab:?from=YYYY-MM-DD&to=YYYY-MM-DD 过滤 windowDate
@@ -67,6 +69,7 @@ export function predictionRoutes(db: Db, deps: PredictionRouteDeps = {}) {
       ...(status ? { status: status as any } : {}),
       ...(limit ? { limit } : {}),
       ...(includeLatestSnapshot ? { includeLatestSnapshot: true } : {}),
+      ...(includeNames ? { includeNames: true } : {}),
       ...(hasEvidence ? { hasEvidence: true } : {}),
       ...(fromRaw ? { from: fromRaw } : {}),
       ...(toRaw ? { to: toRaw } : {}),
