@@ -74,7 +74,7 @@ export function AnalystView({ onOpenPrediction, mutationVersion = 0 }: {
     // mutationVersion 变化时 → 父级提示「某 prediction 被改了」,这里只重拉 list,
     // 不 unmount 任何 child(详情页保持开)。
     Promise.all([listWatchLists(), listTaskCards(),
-      listPredictions({ status: 'PROPOSED', limit: 100, includeLatestSnapshot: true })])
+      listPredictions({ status: 'PROPOSED', limit: 100, includeLatestSnapshot: true, hasEvidence: true })])
       .then(([wls, tcs, ps]) => { setWatchlists(wls); setTaskcards(tcs); setPredictions(ps) })
       .catch(console.error)
       .finally(() => setLoading(false))
@@ -119,7 +119,7 @@ export function AnalystView({ onOpenPrediction, mutationVersion = 0 }: {
     // 给最后一条 LLM 12s 算完(P5 默认 ~10s),然后刷新列表
     setTimeout(async () => {
       try {
-        const fresh = await listPredictions({ status: 'PROPOSED', limit: 100, includeLatestSnapshot: true })
+        const fresh = await listPredictions({ status: 'PROPOSED', limit: 100, includeLatestSnapshot: true, hasEvidence: true })
         setPredictions(fresh)
       } catch (e) { console.error(e) }
       setTimeout(() => setBatchProgress(null), 4000)
@@ -175,7 +175,7 @@ export function AnalystView({ onOpenPrediction, mutationVersion = 0 }: {
     setSpawnFlash(parts.join(' · '))
     // 刷新列表
     try {
-      const fresh = await listPredictions({ status: 'PROPOSED', limit: 100, includeLatestSnapshot: true })
+      const fresh = await listPredictions({ status: 'PROPOSED', limit: 100, includeLatestSnapshot: true, hasEvidence: true })
       setPredictions(fresh)
     } catch (e) { console.error(e) }
     setTimeout(() => { setSpawnProgress(null); setSpawnFlash(null) }, 8000)
@@ -450,7 +450,7 @@ export function AnalystView({ onOpenPrediction, mutationVersion = 0 }: {
                   await deletePrediction(r.id)
                   setActionFlash(`✓ 已删除 [${r.id.slice(0,8)}]`)
                   // 重 fetch 列表
-                  const fresh = await listPredictions({ status: 'PROPOSED', limit: 100, includeLatestSnapshot: true })
+                  const fresh = await listPredictions({ status: 'PROPOSED', limit: 100, includeLatestSnapshot: true, hasEvidence: true })
                   setPredictions(fresh)
                   setTimeout(() => setActionFlash(null), 5000)
                 } catch (e) {
@@ -485,7 +485,7 @@ export function AnalystView({ onOpenPrediction, mutationVersion = 0 }: {
           setActionFlash(`✓ 已更新预测 [${editingRow.id.slice(0,8)}] 窗口为 ${patch.windowDate ?? editingRow.windowDate.slice(0,10)} ${patch.windowHalf ?? editingRow.windowHalf}`)
           // 重 fetch
           try {
-            const fresh = await listPredictions({ status: 'PROPOSED', limit: 100, includeLatestSnapshot: true })
+            const fresh = await listPredictions({ status: 'PROPOSED', limit: 100, includeLatestSnapshot: true, hasEvidence: true })
             setPredictions(fresh)
           } catch (e) { console.error(e) }
           setTimeout(() => setActionFlash(null), 5000)
