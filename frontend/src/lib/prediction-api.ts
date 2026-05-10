@@ -148,18 +148,32 @@ export async function setManualConfidence(
   })
 }
 
-// 预测自动/手动生产 — 对所有 active watchlist 在未来 N 天内确保 PROPOSED 预测覆盖
-export type SpawnAllResult = {
+// (β) 「📡 生成预测」新路径 — 拉新闻(用 settings.news_freshness_days 窗口)
+// + 同步 drain extract → 创建/合并 prediction(必带 evidence)
+export type SpawnFromNewsResult = {
   ok: boolean
-  totalSpawned: number
-  totalSkipped: number
   watchlistsProcessed: number
-  results: Array<{ watchlistId: string; watchlistName: string; spawned: number; skipped: number }>
+  newsFetched: number
+  newsInserted: number
+  extractAttempted: number
+  predictionsCreated: number
+  predictionsMerged: number
+  llmDegraded: number
+  errors: number
+  perWatchlist: Array<{
+    watchlistId: string
+    name: string
+    newsFetched: number
+    newsInserted: number
+    extracted: number
+    created: number
+    merged: number
+    error?: string
+  }>
 }
-export async function spawnFromAllWatchlists(coverageDays?: number): Promise<SpawnAllResult> {
-  return api<SpawnAllResult>('/predictions/spawn-from-all', {
-    method: 'POST',
-    body: JSON.stringify(coverageDays !== undefined ? { coverageDays } : {}),
+export async function spawnFromNews(): Promise<SpawnFromNewsResult> {
+  return api<SpawnFromNewsResult>('/predictions/spawn-from-news', {
+    method: 'POST', body: '{}',
   })
 }
 

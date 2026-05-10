@@ -20,6 +20,7 @@ export type NewsExtractJobData = { newsId: string }
 export type NewsExtractJobResult = {
   evaluated: number
   created: number
+  merged: number
   llmDegraded: boolean
 }
 
@@ -35,6 +36,7 @@ export async function processNewsExtractJob(
   return {
     evaluated: out.evaluated,
     created: out.created,
+    merged: out.merged,
     llmDegraded: out.llmDegraded,
   }
 }

@@ -84,12 +84,16 @@ app.route('/retrospectives', retrospectiveRoutes(db))
 app.route('/webhook', webhookRoutes(db))
 app.route('/settings', settingsRoutes(db))
 
-// Plan-C T37 / Slice 0 — customer demo helpers. Mounted only outside
-// production so a misconfigured prod deploy can't expose `/__demo/*`.
-// See `src/__demo/routes.ts` for the route docs.
-if (env.NODE_ENV !== 'production') {
+// Plan-C T37 / Slice 0 — customer demo helpers.
+// 收紧门控(L3 修复):仅在 NODE_ENV != production AND DEBUG_ROUTES=true 时挂载。
+// 之前只 NODE_ENV 一道闸,本地开发也会无意暴露 /__demo/seed-prediction 路径
+// 创建无证据预测,违反 #1 原则。现在必须显式 DEBUG_ROUTES=true 才能用。
+const debugRoutesEnabled = env.NODE_ENV !== 'production' && process.env.DEBUG_ROUTES === 'true'
+if (debugRoutesEnabled) {
   app.route('/__demo', demoRoutes(db))
-  logger.info('demo routes mounted', { path: '/__demo' })
+  logger.info('demo routes mounted (DEBUG_ROUTES=true)', { path: '/__demo' })
+} else {
+  logger.info('demo routes NOT mounted (set DEBUG_ROUTES=true to enable in dev)')
 }
 
 logger.info('server starting', { port: env.PORT })

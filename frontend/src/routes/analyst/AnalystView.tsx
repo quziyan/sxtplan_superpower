@@ -6,7 +6,7 @@ import { listTaskCards, type TaskCard } from '@/lib/taskcard-api'
 import { listVehicleClasses, listTaskClasses, type VehicleClass, type TaskClass } from '@/lib/taxonomy-api'
 import { listRegions, type RegionListItem } from '@/lib/region-api'
 import { getNewsFreshnessDays, setNewsFreshnessDays } from '@/lib/settings-api'
-import { recomputeNow, spawnFromAllWatchlists } from '@/lib/prediction-api'
+import { recomputeNow, spawnFromNews } from '@/lib/prediction-api'
 import { NewWatchListModal } from './NewWatchListModal'
 import { NewTaskCardModal } from './NewTaskCardModal'
 
@@ -110,21 +110,32 @@ export function AnalystView({ onOpenPrediction, mutationVersion = 0 }: {
     }, 12_000)
   }
 
-  // 手动触发预测生产 — 对所有 active watchlist 在未来 7 天内确保 PROPOSED 覆盖
+  // (β) 「📡 生成预测」 — 触发 spawn-from-news:
+  //  ① 对每个 active watchlist 拉新闻(用 settings.news_freshness_days 窗口)
+  //  ② 同步 drain extract → 创建/合并 prediction(必带 evidence)
+  // backend 跑 1-3 分钟,UI 显示 spinner + 末尾报告。
   const onSpawnAll = async () => {
     if (spawning) return
     setSpawning(true)
     setSpawnFlash(null)
     try {
-      const r = await spawnFromAllWatchlists(7)
-      setSpawnFlash(`✓ 已生产 ${r.totalSpawned} 条新预测(跳过 ${r.totalSkipped} 已存在),覆盖 ${r.watchlistsProcessed} 个 watchlist`)
+      const r = await spawnFromNews()
+      const parts: string[] = [
+        `✓ 处理 ${r.watchlistsProcessed} 个监视清单`,
+        `抓 ${r.newsFetched} 条新闻(${r.newsInserted} 新)`,
+        `新建 ${r.predictionsCreated} 条预测`,
+        `合并 ${r.predictionsMerged} 条`,
+      ]
+      if (r.llmDegraded > 0) parts.push(`⚠ LLM 失败 ${r.llmDegraded}`)
+      if (r.errors > 0) parts.push(`⚠ 错误 ${r.errors}`)
+      setSpawnFlash(parts.join(' · '))
       // 刷新列表
       const fresh = await listPredictions({ status: 'PROPOSED', limit: 100, includeLatestSnapshot: true })
       setPredictions(fresh)
-      setTimeout(() => setSpawnFlash(null), 8000)
+      setTimeout(() => setSpawnFlash(null), 12000)
     } catch (e) {
       setSpawnFlash('✗ ' + (e as Error).message)
-      setTimeout(() => setSpawnFlash(null), 8000)
+      setTimeout(() => setSpawnFlash(null), 12000)
     } finally {
       setSpawning(false)
     }

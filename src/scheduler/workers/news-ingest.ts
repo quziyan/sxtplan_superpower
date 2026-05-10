@@ -76,6 +76,8 @@ export type NewsIngestTickResult = {
   newsInserted: number
   triageJobsEnqueued: number
   errors: number
+  /** 本轮真正新进库的 news.id 列表(去重后)。spawn-from-news 路径用它做同步 drain extract。*/
+  newlyInsertedNewsIds: string[]
 }
 
 export async function tickNewsIngest(
@@ -87,6 +89,7 @@ export async function tickNewsIngest(
     newsInserted: 0,
     triageJobsEnqueued: 0,
     errors: 0,
+    newlyInsertedNewsIds: [],
   }
 
   const adapter: NewsIngestSearchAdapterLike =
@@ -180,6 +183,7 @@ export async function tickNewsIngest(
         const { news, isNew } = await ingestHit(deps.db, hit)
         if (!isNew) continue // dup URL — already processed on a prior tick
         result.newsInserted++
+        result.newlyInsertedNewsIds.push(news.id)
 
         // Stamp matched_regions with this watchlist's region so downstream
         // (extract / triage / matcher) can see it.

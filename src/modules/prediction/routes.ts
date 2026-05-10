@@ -13,7 +13,9 @@ import { dispatchTasks, mediaAssets, type DispatchTask, type MediaAsset } from '
 import { requestCancel } from '@/dispatch/service'
 import { writeConfidenceSnapshot } from './confidence'
 import { getPrediction, getSnapshots, getNewsEvidence, getNewsByIds, listPredictions, transitionStatus } from './service'
-import { ensureCoverageForWatchlist, ensureCoverageForAll, totalize } from './spawner'
+import { runNewsExtractAgent } from '@/agents/news-extract-agent'
+import { newsExtractQueue } from '@/scheduler/queue'
+import { watchLists } from '@/db/schema/watchlist'
 
 const manualConfSchema = z.object({
   confidence: z.number().int().min(0).max(100),
@@ -193,38 +195,80 @@ export function predictionRoutes(db: Db, deps: PredictionRouteDeps = {}) {
     return c.json({ ok: true, prediction: after })
   })
 
-  // 预测自动/手动生产 — 对单个 watchlist 或全体 active watchlist 在
-  // 未来 [today, today+coverageDays] 的每个 (windowDate, AM/PM) 确保有
-  // 一行 PROPOSED prediction(幂等)。详见 ./spawner.ts。
-  const spawnSchema = z.object({
-    coverageDays: z.number().int().min(1).max(30).optional(),
-  })
-  app.post('/spawn-from-watchlist/:id', authRequired(db),
+  // (β) 「📡 生成预测」按钮新后端 — 每个 active watchlist 一轮:
+  //   ① 拉新闻(scoped tickNewsIngest,使用 settings.news_freshness_days 窗口)
+  //   ② 同步 drain extract(每条新 news 跑 LLM)
+  //   ③ createPredictionFromNews 幂等合并(已存在 → 加 evidence + 新 snap + max conf)
+  // 所有 prediction 必带 news_evidence(三表原子写),贯彻 #1 原则。
+  app.post('/spawn-from-news', authRequired(db),
     roleRequired('ANALYST'),
-    zValidator('json', spawnSchema),
     async (c) => {
-      const id = c.req.param('id')
-      const body = c.req.valid('json')
-      const opts: import('./spawner').SpawnOpts =
-        body.coverageDays !== undefined ? { coverageDays: body.coverageDays } : {}
-      try {
-        const r = await ensureCoverageForWatchlist(db, id, opts)
-        return c.json({ ok: true, ...r })
-      } catch (err) {
-        throw NotFound((err as Error).message)
+      const active = await db.select().from(watchLists).where(eq(watchLists.isActive, true))
+      const summary = {
+        watchlistsProcessed: 0,
+        newsFetched: 0,
+        newsInserted: 0,
+        extractAttempted: 0,
+        predictionsCreated: 0,
+        predictionsMerged: 0,
+        llmDegraded: 0,
+        errors: 0,
+        perWatchlist: [] as Array<{
+          watchlistId: string
+          name: string
+          newsFetched: number
+          newsInserted: number
+          extracted: number
+          created: number
+          merged: number
+          error?: string
+        }>,
       }
-    },
-  )
-  app.post('/spawn-from-all', authRequired(db),
-    roleRequired('ANALYST'),
-    zValidator('json', spawnSchema),
-    async (c) => {
-      const body = c.req.valid('json')
-      const opts: import('./spawner').SpawnOpts =
-        body.coverageDays !== undefined ? { coverageDays: body.coverageDays } : {}
-      const results = await ensureCoverageForAll(db, opts)
-      const totals = totalize(results)
-      return c.json({ ok: true, ...totals, results })
+      for (const wl of active) {
+        const wlReport: {
+          watchlistId: string; name: string
+          newsFetched: number; newsInserted: number; extracted: number
+          created: number; merged: number; error?: string
+        } = {
+          watchlistId: wl.id, name: wl.name,
+          newsFetched: 0, newsInserted: 0, extracted: 0, created: 0, merged: 0,
+        }
+        try {
+          // 步骤 ①:scoped 抓新闻(用 settings.news_freshness_days)
+          const ingest = await tickNewsIngest({
+            db,
+            triageQueue: newsTriageQueue,
+            extractQueue: newsExtractQueue,
+            onlyWatchlistId: wl.id,
+          })
+          wlReport.newsFetched = ingest.newsFetched
+          wlReport.newsInserted = ingest.newsInserted
+          summary.newsFetched += ingest.newsFetched
+          summary.newsInserted += ingest.newsInserted
+
+          // 步骤 ②③:同步 drain extract — 不靠 BullMQ 异步;用户立等
+          for (const newsId of ingest.newlyInsertedNewsIds) {
+            try {
+              const r = await runNewsExtractAgent(db, { newsId })
+              wlReport.extracted++
+              summary.extractAttempted++
+              wlReport.created += r.created
+              wlReport.merged += r.merged
+              summary.predictionsCreated += r.created
+              summary.predictionsMerged += r.merged
+              if (r.llmDegraded) summary.llmDegraded++
+            } catch (err) {
+              console.warn(`[spawn-from-news] extract failed for news=${newsId}:`, err)
+            }
+          }
+          summary.watchlistsProcessed++
+        } catch (err) {
+          wlReport.error = (err as Error).message
+          summary.errors++
+        }
+        summary.perWatchlist.push(wlReport)
+      }
+      return c.json({ ok: true, ...summary })
     },
   )
 

@@ -38,8 +38,9 @@ export type NewsExtractInput = {
 export type NewsExtractResult = {
   newsId: string
   evaluated: number       // 评估了多少 watchlist
-  created: number         // 真创建了多少 prediction
-  llmDegraded: boolean    // LLM 失败时 fallback (created=0)
+  created: number         // 新建的 prediction 数(幂等键不命中)
+  merged: number          // 合并到已有的 prediction 数(幂等键命中)
+  llmDegraded: boolean    // LLM 失败时 fallback (created=merged=0)
 }
 
 export async function runNewsExtractAgent(
@@ -53,7 +54,7 @@ export async function runNewsExtractAgent(
   // 2. 拿所有 active watchlist + V/T/region 名
   const wls = await db.select().from(watchLists).where(eq(watchLists.isActive, true))
   if (wls.length === 0) {
-    return { newsId: input.newsId, evaluated: 0, created: 0, llmDegraded: false }
+    return { newsId: input.newsId, evaluated: 0, created: 0, merged: 0, llmDegraded: false }
   }
 
   // 解析 V/T 名 + region 名
@@ -99,11 +100,11 @@ export async function runNewsExtractAgent(
     parsed = ExtractOutputSchema.parse(json)
   } catch (err) {
     console.warn(`[news-extract] LLM failed for news ${news.id}: ${(err as Error).message}`)
-    return { newsId: input.newsId, evaluated: wls.length, created: 0, llmDegraded: true }
+    return { newsId: input.newsId, evaluated: wls.length, created: 0, merged: 0, llmDegraded: true }
   }
 
   // 4. 对每个 extracted 输出原子写
-  let created = 0
+  let created = 0, merged = 0
   for (const ext of parsed.extracted) {
     const wlEntry = wlEnriched.find((w) => w.wl.id === ext.watchlistId)
     if (!wlEntry) {
@@ -111,7 +112,7 @@ export async function runNewsExtractAgent(
       continue
     }
     try {
-      await createPredictionFromNews(db, {
+      const r = await createPredictionFromNews(db, {
         newsId: news.id,
         watchlist: wlEntry.wl,
         windowDate: ext.windowDate,
@@ -119,13 +120,13 @@ export async function runNewsExtractAgent(
         confidence: ext.confidence,
         reasoning: ext.reasoning,
       })
-      created++
+      if (r.action === 'created') created++; else merged++
     } catch (err) {
       console.warn(`[news-extract] createPredictionFromNews failed for wl=${ext.watchlistId}: ${(err as Error).message}`)
     }
   }
 
-  return { newsId: input.newsId, evaluated: wls.length, created, llmDegraded: false }
+  return { newsId: input.newsId, evaluated: wls.length, created, merged, llmDegraded: false }
 }
 
 /**
@@ -146,13 +147,19 @@ export type CreateInput = {
   reasoning: string
 }
 
-export async function createPredictionFromNews(db: Db, input: CreateInput): Promise<void> {
+export type CreateResult = {
+  predictionId: string
+  action: 'created' | 'merged'
+}
+
+export async function createPredictionFromNews(db: Db, input: CreateInput): Promise<CreateResult> {
   const wd = new Date(input.windowDate + 'T00:00:00Z')
   const today = new Date()
   today.setUTCHours(0, 0, 0, 0)
   const kDays = Math.max(0, Math.floor((wd.getTime() - today.getTime()) / 86_400_000))
   const expiresAt = new Date(wd.getTime() + 10 * 86_400_000)
 
+  let result: CreateResult = { predictionId: '', action: 'created' }
   await db.transaction(async (tx) => {
     // 幂等查找 — 同 watchlist 同窗口已有 prediction?
     // 用 drizzle and()+eq() 让 Date 序列化由 Drizzle 处理(直接 raw sql 模板
@@ -169,6 +176,7 @@ export async function createPredictionFromNews(db: Db, input: CreateInput): Prom
     let predId: string
     if (existing) {
       predId = existing.id
+      result = { predictionId: predId, action: 'merged' }
     } else {
       const [created] = await tx.insert(predictions).values({
         sourceKind: 'WATCHLIST', sourceId: input.watchlist.id,
@@ -181,6 +189,7 @@ export async function createPredictionFromNews(db: Db, input: CreateInput): Prom
         expiresAt,
       }).returning({ id: predictions.id })
       predId = created!.id
+      result = { predictionId: predId, action: 'created' }
     }
 
     // news_evidence 链 — weight=HIGH 因为这是 LLM 主动从该新闻提取出来的预测
@@ -209,4 +218,5 @@ export async function createPredictionFromNews(db: Db, input: CreateInput): Prom
         .where(eq(predictions.id, predId))
     }
   })
+  return result
 }
