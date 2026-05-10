@@ -19,7 +19,10 @@
     "seed:taxonomy:police": "bun src/seeds/police-taxonomy.ts",
     "seed:demo-data": "bun src/seeds/demo-data.ts",
     "clean:fixtures": "bun scripts/clean-fixture-pollution.ts",
-    "demo:real-pipeline": "bun scripts/run-real-pipeline.ts"
+    "demo:real-pipeline": "bun scripts/run-real-pipeline.ts",
+    "verify:loop": "bun scripts/verify-full-loop.ts",
+    "scheduler": "bun src/scheduler/workers.ts",
+    "scheduler:dev": "bun --watch src/scheduler/workers.ts"
   },
   "dependencies": {
     "@hono/zod-validator": "^0.4.0",

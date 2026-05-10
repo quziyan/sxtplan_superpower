@@ -20,6 +20,7 @@ import { createFullRecalcWorker } from './workers/full-recalc'
 import { createMediaFetchWorker } from './workers/media-fetch'
 import { scheduleNewsIngestTick } from './workers/news-ingest'
 import { createNewsTriageWorker } from './workers/news-triage'
+import { schedulePredictionSpawnTick } from './workers/prediction-spawn'
 import { createRefreshWorker } from './workers/refresh'
 import { createRetrospectiveWorker, scheduleRetrospectiveTick } from './workers/retrospective'
 
@@ -47,6 +48,8 @@ export async function startWorkers(): Promise<void> {
   console.log('[scheduler] auto-cancel tick scheduled (5m)')
   intervals.push(scheduleNewsIngestTick())
   console.log('[scheduler] news-ingest tick scheduled (15m default)')
+  intervals.push(schedulePredictionSpawnTick())
+  console.log('[scheduler] prediction-spawn tick scheduled (24h)')
   console.log('[scheduler] queues defined: refresh, full-recalc, news-ingest, news-triage, dispatch, media-fetch, retrospective')
 }
 
