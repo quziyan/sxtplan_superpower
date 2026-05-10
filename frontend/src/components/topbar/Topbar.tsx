@@ -1,19 +1,25 @@
 import { IconBtn } from '../IconBtn'
 import { Brand } from './Brand'
-import { RoleTabs, type RoleKey } from './RoleTabs'
+import { ViewTabs, type RoleKey, type TabKey } from './RoleTabs'
 import { UserPill } from './UserPill'
 
-export function Topbar({ user, activeRole, availableRoles, onRoleChange, onLogout }: {
+/**
+ * Topbar 现在有 4 个 tab:Analyst / Decider / Reviewer / Schedule。
+ * Schedule 全局可见 = 任何登录用户都看得到;点击不切 role,仅切视图。
+ */
+export function Topbar({ user, activeTab, availableRoles, onTabChange, onLogout, activeRole }: {
   user: { displayName: string | null; email: string }
-  activeRole: RoleKey | null
+  activeTab: TabKey | null
   availableRoles: RoleKey[]
-  onRoleChange: (k: RoleKey) => void
+  onTabChange: (k: TabKey) => void
   onLogout: () => void
+  /** 用户真实角色态(独立于 activeTab) — 给 UserPill 显示用 */
+  activeRole: RoleKey | null
 }) {
   return (
     <header className="topbar">
       <Brand />
-      <RoleTabs active={activeRole} available={availableRoles} onChange={onRoleChange} />
+      <ViewTabs active={activeTab} available={availableRoles} onChange={onTabChange} />
       <div className="topbar__actions">
         <IconBtn icon="search" title="搜索 ⌘K" />
         <IconBtn icon="bell" title="通知" dot />

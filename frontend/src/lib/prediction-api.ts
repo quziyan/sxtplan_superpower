@@ -60,7 +60,16 @@ export type ConfidenceSnapshot = {
 }
 
 export async function listPredictions(
-  opts: { status?: PredictionStatus; limit?: number; includeLatestSnapshot?: boolean; hasEvidence?: boolean } = {},
+  opts: {
+    status?: PredictionStatus
+    limit?: number
+    includeLatestSnapshot?: boolean
+    hasEvidence?: boolean
+    /** Schedule tab: windowDate ≥ from (YYYY-MM-DD) */
+    from?: string
+    /** Schedule tab: windowDate ≤ to (YYYY-MM-DD) */
+    to?: string
+  } = {},
 ): Promise<PredictionListItem[]> {
   const params = new URLSearchParams()
   if (opts.status) params.set('status', opts.status)
@@ -71,6 +80,8 @@ export async function listPredictions(
   if (opts.includeLatestSnapshot) params.set('include', 'latest_snapshot')
   // m5 UI: 过滤无证据 prediction(分析师 proposal 列表只看 actionable 的)
   if (opts.hasEvidence) params.set('has_evidence', 'true')
+  if (opts.from) params.set('from', opts.from)
+  if (opts.to) params.set('to', opts.to)
   const qs = params.toString()
   return api<PredictionListItem[]>(`/predictions${qs ? `?${qs}` : ''}`)
 }
