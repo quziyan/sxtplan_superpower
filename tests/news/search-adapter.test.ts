@@ -24,9 +24,68 @@ describe('SearchAdapter', () => {
     await expect(a.query()).rejects.toThrow(NotImplementedError)
   })
 
-  test('Aggregator adapter throws NotImplementedError', async () => {
+  test('Aggregator adapter — empty pool returns []', async () => {
+    // 单独实例化(没接入 pool)→ list() 是 null,降级返 []
     const a = new AggregatorSearchAdapter()
-    await expect(a.query()).rejects.toThrow(NotImplementedError)
+    const r = await a.query(['kw'])
+    expect(Array.isArray(r)).toBe(true)
+    expect(r.length).toBe(0)
+  })
+
+  test('Aggregator via pool fan-outs to all sources + 去重 by URL + 降级单源失败', async () => {
+    // Fake fetch:
+    // - tavily 返回 2 条
+    // - gov-* 三个站点 fetch 返回 HTML 但 parser 解不出新闻(空)
+    // - 整体只见 tavily 2 条
+    const originalFetch = globalThis.fetch
+    let tavilyCalls = 0, govCalls = 0
+    globalThis.fetch = (async (url: unknown, _init?: unknown) => {
+      const u = String(url)
+      if (u.includes('tavily.com')) {
+        tavilyCalls++
+        return new Response(JSON.stringify({
+          results: [
+            { title: 'A', url: 'https://shared.example/a', content: 's', published_date: '2026-05-09' },
+            { title: 'B', url: 'https://shared.example/b', content: 's', published_date: '2026-05-09' },
+          ],
+        }), { status: 200, headers: { 'Content-Type': 'application/json' } })
+      }
+      if (u.includes('gd.gov.cn') || u.includes('gz.gov.cn')) {
+        govCalls++
+        // 返回 robots.txt 和空 HTML 页(parser 找不到 .list_news li)
+        if (u.endsWith('/robots.txt')) return new Response('', { status: 404 })
+        return new Response('<html><body><p>no news here</p></body></html>',
+          { status: 200, headers: { 'Content-Type': 'text/html' } })
+      }
+      return new Response('', { status: 404 })
+    }) as typeof globalThis.fetch
+
+    try {
+      resetEnvCacheForTests()
+      resetSearchAdapterPoolForTests()
+      process.env.SEARCH_API_KIND = 'aggregator'
+      process.env.TAVILY_API_KEY = 'tvly-test-key'
+      process.env.GOV_SCRAPER_ENABLED = 'true'
+
+      const a = getSearchAdapter()
+      expect(a.kind).toBe('aggregator')
+      const hits = await a.query(['关键词'])
+      // 4 sources(tavily + 3 gov),tavily 出 2 条 unique URL,gov 全空
+      expect(hits.length).toBe(2)
+      expect(hits.map(h => h.url).sort()).toEqual([
+        'https://shared.example/a',
+        'https://shared.example/b',
+      ])
+      expect(tavilyCalls).toBe(1)
+      expect(govCalls).toBeGreaterThanOrEqual(3)  // 3 gov + maybe 3 robots.txt
+    } finally {
+      globalThis.fetch = originalFetch
+      resetEnvCacheForTests()
+      resetSearchAdapterPoolForTests()
+      delete process.env.SEARCH_API_KIND
+      delete process.env.TAVILY_API_KEY
+      delete process.env.GOV_SCRAPER_ENABLED
+    }
   })
 
   test('getSearchAdapter() factory respects SEARCH_API_KIND=mock by default', () => {

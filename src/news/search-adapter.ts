@@ -167,11 +167,59 @@ class DdgSearchAdapter implements SearchAdapter {
   }
 }
 
+/**
+ * AggregatorSearchAdapter — 多源扇出适配器。
+ *
+ * query(keywords, opts) 行为:
+ *  1. 从 pool.list() 取所有已实例化的 adapter,过滤掉自己('aggregator')
+ *  2. 并行调每个 adapter.query(keywords, opts),独立 catch 错误(降级返 [])
+ *  3. 按 URL 去重合并 SearchHit[]
+ *
+ * 用法:.env 设 SEARCH_API_KIND=aggregator + 至少一个 alsoRegister 源
+ *       (默认 _initSearchPool 在 aggregator 模式下自动 alsoRegister tavily;
+ *        GOV_SCRAPER_ENABLED=true 时再 alsoRegister 三个 gov-*)
+ *
+ * 设计要点:
+ *  - 使用 module-level _pool,query 时 lazy 取(避免构造时循环依赖)
+ *  - 单源失败不影响其他源(每个 query 包 try/catch)
+ *  - URL 去重保留首个出现的 SearchHit(同一新闻被两个源抓到时,先抓的胜)
+ */
 class AggregatorSearchAdapter implements SearchAdapter {
   readonly kind = 'aggregator' as const
   readonly key = 'aggregator'
-  async query(): Promise<SearchHit[]> {
-    throw new NotImplementedError('aggregator')
+  async query(keywords: string[], opts: SearchOpts = {}): Promise<SearchHit[]> {
+    if (!_pool) return []
+    const allKeys = _pool.list().filter((k) => k !== 'aggregator')
+    if (allKeys.length === 0) {
+      console.warn('[aggregator] no source adapters registered, returning empty')
+      return []
+    }
+    const adapters = allKeys.map((k) => _pool!.get(k))
+    const results = await Promise.all(
+      adapters.map(async (a) => {
+        try {
+          return await a.query(keywords, opts)
+        } catch (err) {
+          console.warn(`[aggregator] ${a.key} failed: ${(err as Error).message}`)
+          return []
+        }
+      }),
+    )
+    // 按 URL 去重合并
+    const seen = new Set<string>()
+    const out: SearchHit[] = []
+    for (const arr of results) {
+      for (const hit of arr) {
+        if (!hit.url || seen.has(hit.url)) continue
+        seen.add(hit.url)
+        out.push(hit)
+      }
+    }
+    console.log(
+      `[aggregator] fan-out done — ${allKeys.length} sources (${allKeys.join(',')}), ` +
+      `${out.length} unique hits (raw total ${results.reduce((s, r) => s + r.length, 0)})`,
+    )
+    return out
   }
 }
 
@@ -221,6 +269,13 @@ function _initSearchPool(): Pool<SearchAdapter> {
   // defense-in-depth in case the schema ever drifts from the factories.
   const defaultKey = VALID_SEARCH_KEYS.has(env.SEARCH_API_KIND) ? env.SEARCH_API_KIND : 'mock'
   const alsoRegister: string[] = []
+
+  // Aggregator 模式:扇出到多个源,需要 also-register 候选源
+  if (defaultKey === 'aggregator') {
+    // tavily 是基础新闻源,默认拉进来(若有 key)
+    if (env.TAVILY_API_KEY) alsoRegister.push('tavily')
+  }
+
   // Gov scrapers (Plan-D Tasks 13-15, A2-γ) are opt-in: only registered into the
   // active pool when `GOV_SCRAPER_ENABLED=true`. Mirrors the `simulated-gzp`
   // pattern in src/dispatch/adapter-pool.ts.
