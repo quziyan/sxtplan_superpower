@@ -10,7 +10,12 @@ import { recomputeNow, spawnFromAllWatchlists } from '@/lib/prediction-api'
 import { NewWatchListModal } from './NewWatchListModal'
 import { NewTaskCardModal } from './NewTaskCardModal'
 
-export function AnalystView({ onOpenPrediction }: { onOpenPrediction?: (id: string) => void }) {
+export function AnalystView({ onOpenPrediction, mutationVersion = 0 }: {
+  onOpenPrediction?: (id: string) => void
+  // 父级 App 在某 prediction 被修改后 bump 这个数字,触发 list refetch
+  // 但不会 unmount 视图(详情页保持开着)。
+  mutationVersion?: number
+}) {
   const [watchlists, setWatchlists] = useState<WatchList[]>([])
   const [taskcards, setTaskcards] = useState<TaskCard[]>([])
   const [predictions, setPredictions] = useState<Prediction[]>([])
@@ -50,12 +55,14 @@ export function AnalystView({ onOpenPrediction }: { onOpenPrediction?: (id: stri
   useEffect(() => {
     // (β) m5 UI 对齐:分析师工作台只看 PROPOSED — 待我审完后推送给决策者(VALIDATED)。
     // 拿 latestSnapshot 让 KPI/表格能区分已运行 LLM 和零置信度待评估的提案。
+    // mutationVersion 变化时 → 父级提示「某 prediction 被改了」,这里只重拉 list,
+    // 不 unmount 任何 child(详情页保持开)。
     Promise.all([listWatchLists(), listTaskCards(),
       listPredictions({ status: 'PROPOSED', limit: 100, includeLatestSnapshot: true })])
       .then(([wls, tcs, ps]) => { setWatchlists(wls); setTaskcards(tcs); setPredictions(ps) })
       .catch(console.error)
       .finally(() => setLoading(false))
-  }, [])
+  }, [mutationVersion])
 
   useEffect(() => {
     Promise.all([listVehicleClasses(), listTaskClasses(), listRegions({ kind: 'ALL' })])

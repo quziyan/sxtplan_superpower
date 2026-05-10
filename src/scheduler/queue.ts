@@ -20,6 +20,12 @@ export const newsIngestQueue = new Queue<{ keywords: string[] }>('news-ingest', 
  * HIGH-weight evidence, enqueues a refresh-INCR job.
  */
 export const newsTriageQueue = new Queue<{ predictionId: string; newsId: string }>('news-triage', { connection })
+/**
+ * News-extract queue (问题 #1 反向流). Producer: tickNewsIngest 每条 ingest'd
+ * 入一个 job. Consumer: createNewsExtractWorker 调 runNewsExtractAgent 决定
+ * 从该 news 提取出几个 NEW prediction(linked to active watchlists)。
+ */
+export const newsExtractQueue = new Queue<{ newsId: string }>('news-extract', { connection })
 export const dispatchQueue = new Queue<{ predictionId: string; adapterKey: string }>('dispatch', { connection })
 
 /**
@@ -57,6 +63,7 @@ export async function closeAllQueues() {
     fullRecalcQueue.close(),
     newsIngestQueue.close(),
     newsTriageQueue.close(),
+    newsExtractQueue.close(),
     dispatchQueue.close(),
     mediaFetchQueue.close(),
     retrospectiveQueue.close(),

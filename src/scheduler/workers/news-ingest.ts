@@ -40,11 +40,18 @@ export type NewsTriageQueueLike = {
   ) => Promise<unknown>
 }
 
+// 问题 #1 新流:每条新闻进 extract 队列触发 NewsExtractAgent 提取新预测
+export type NewsExtractQueueLike = {
+  add: (name: string, data: { newsId: string }) => Promise<unknown>
+}
+
 export type NewsIngestSearchAdapterLike = Pick<SearchAdapter, 'query'>
 
 export type NewsIngestDeps = {
   db: Db
   triageQueue: NewsTriageQueueLike
+  /** 问题 #1 新流:每条新闻还入这个队列触发 extract agent。可选,不传则跳过提取(legacy 模式)。*/
+  extractQueue?: NewsExtractQueueLike
   /** Override the SearchAdapter (e.g. tests). Defaults to env-selected adapter. */
   searchAdapter?: NewsIngestSearchAdapterLike
   /**
@@ -171,15 +178,24 @@ export async function tickNewsIngest(
 
       for (const hit of hits) {
         const { news, isNew } = await ingestHit(deps.db, hit)
-        if (!isNew) continue // dup URL — already triaged on a prior tick
+        if (!isNew) continue // dup URL — already processed on a prior tick
         result.newsInserted++
 
-        // Stamp matched_regions with this watchlist's region so the synchronous
-        // matcher can see it. m4 geocoder may later widen this list.
+        // Stamp matched_regions with this watchlist's region so downstream
+        // (extract / triage / matcher) can see it.
         await deps.db
           .update(newsItems)
           .set({ matchedRegions: [wl.regionId] })
           .where(eq(newsItems.id, news.id))
+
+        // 双路径(问题 #1 反向流之后):
+        //  (A) 对每条 ingest'd news 入 extract 队列 → LLM 决定是否从该新闻
+        //      派生 N 个 NEW prediction(各带 evidence + 初始置信度)
+        //  (B) 同时,若该 news 区域已有 EXISTING prediction → 入 triage 队列
+        //      做增量证据评估(MED+ 写 evidence,HIGH 触发 INCR refresh)
+        if (deps.extractQueue) {
+          await deps.extractQueue.add('extract', { newsId: news.id })
+        }
 
         const candidates = await findMatchingPredictions(deps.db, news.id)
         for (const cand of candidates) {
@@ -202,8 +218,10 @@ export async function tickNewsIngest(
 export function defaultNewsIngestDeps(): NewsIngestDeps {
   // Lazy require so import-time does not pull BullMQ / Redis when tests stub
   // out the queue. `newsTriageQueue` is added to scheduler/queue.ts in Task 9.
+  // newsExtractQueue (问题 #1) — 反向流的下游队列。
   const queueMod = require('../queue') as {
     newsTriageQueue?: NewsTriageQueueLike
+    newsExtractQueue?: NewsExtractQueueLike
   }
   if (!queueMod.newsTriageQueue) {
     throw new Error(
@@ -211,7 +229,11 @@ export function defaultNewsIngestDeps(): NewsIngestDeps {
     )
   }
   const { db } = createDb('admin')
-  return { db, triageQueue: queueMod.newsTriageQueue }
+  return {
+    db,
+    triageQueue: queueMod.newsTriageQueue,
+    ...(queueMod.newsExtractQueue ? { extractQueue: queueMod.newsExtractQueue } : {}),
+  }
 }
 
 /**

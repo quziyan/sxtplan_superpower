@@ -18,7 +18,10 @@ function previewReasoning(raw: string | null | undefined): string | undefined {
   return collapsed.length > 100 ? collapsed.slice(0, 100).trimEnd() + '…' : collapsed
 }
 
-export function DecisionView({ onOpenPrediction }: { onOpenPrediction?: (id: string) => void }) {
+export function DecisionView({ onOpenPrediction, mutationVersion = 0 }: {
+  onOpenPrediction?: (id: string) => void
+  mutationVersion?: number
+}) {
   const [items, setItems] = useState<PredictionListItem[]>([])
   const [vMap, setVMap] = useState<Map<string, VehicleClass>>(new Map())
   const [tMap, setTMap] = useState<Map<string, TaskClass>>(new Map())
@@ -55,7 +58,8 @@ export function DecisionView({ onOpenPrediction }: { onOpenPrediction?: (id: str
     finally { setLoading(false) }
   }, [])
 
-  useEffect(() => { refresh() }, [refresh])
+  // mutationVersion 变化时也重拉 list(父级 App 在 detail 触发 onMutated 后 bump)
+  useEffect(() => { refresh() }, [refresh, mutationVersion])
 
   const onApprove = async (id: string) => {
     setBusy(id); setError(null)

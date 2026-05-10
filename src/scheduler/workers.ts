@@ -18,9 +18,9 @@ import { scheduleCadenceTick } from './workers/cadence'
 import { createDispatchWorker } from './workers/dispatch'
 import { createFullRecalcWorker } from './workers/full-recalc'
 import { createMediaFetchWorker } from './workers/media-fetch'
+import { createNewsExtractWorker } from './workers/news-extract'
 import { scheduleNewsIngestTick } from './workers/news-ingest'
 import { createNewsTriageWorker } from './workers/news-triage'
-import { schedulePredictionSpawnTick } from './workers/prediction-spawn'
 import { createRefreshWorker } from './workers/refresh'
 import { createRetrospectiveWorker, scheduleRetrospectiveTick } from './workers/retrospective'
 
@@ -40,6 +40,8 @@ export async function startWorkers(): Promise<void> {
   console.log('[scheduler] retrospective worker registered')
   workers.push(createNewsTriageWorker())
   console.log('[scheduler] news-triage worker registered')
+  workers.push(createNewsExtractWorker())
+  console.log('[scheduler] news-extract worker registered (问题 #1 反向流)')
   intervals.push(scheduleCadenceTick())
   console.log('[scheduler] cadence tick scheduled (60s)')
   intervals.push(scheduleRetrospectiveTick())
@@ -48,9 +50,12 @@ export async function startWorkers(): Promise<void> {
   console.log('[scheduler] auto-cancel tick scheduled (5m)')
   intervals.push(scheduleNewsIngestTick())
   console.log('[scheduler] news-ingest tick scheduled (15m default)')
-  intervals.push(schedulePredictionSpawnTick())
-  console.log('[scheduler] prediction-spawn tick scheduled (24h)')
-  console.log('[scheduler] queues defined: refresh, full-recalc, news-ingest, news-triage, dispatch, media-fetch, retrospective')
+  // 问题 #1:prediction-spawn 已弃用 — 预测必须从新闻提取(news-extract worker
+  // 是 producer)。spawn 服务函数 + 路由仍保留作迁移期手动安全网,但 scheduler
+  // 不再周期 tick 它。
+  // intervals.push(schedulePredictionSpawnTick())  // DEPRECATED
+  console.log('[scheduler] prediction-spawn tick DISABLED (问题 #1 反向流;spawn 弃用,改为新闻 extract)')
+  console.log('[scheduler] queues defined: refresh, full-recalc, news-ingest, news-triage, news-extract, dispatch, media-fetch, retrospective')
 }
 
 export async function stopWorkers(): Promise<void> {

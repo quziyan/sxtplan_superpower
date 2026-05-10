@@ -124,17 +124,11 @@ describe('tickNewsIngest', () => {
         withKeywords: ['ingest-test-' + stamp],
       })
 
-      const calls: Array<{ predictionId: string; newsId: string }> = []
-      const triageQ: NewsTriageQueueLike = {
-        add: async (_, d) => {
-          calls.push(d)
-          return undefined
-        },
-      }
+      const triageQ: NewsTriageQueueLike = { add: async () => undefined }
+      // 问题 #1 反向流:news-ingest 现在 enqueue 到 extractQueue。
+      const extractCalls: Array<{ newsId: string }> = []
+      const extractQ = { add: async (_: string, d: { newsId: string }) => { extractCalls.push(d); return undefined } }
 
-      // Title contains the watchlist's V + T names so the matcher classifies
-      // candidates with the strongest reason. Matcher only requires region
-      // membership though — V/T text is a tier hint, not a filter.
       const fakeAdapter = {
         query: async () => [
           {
@@ -155,14 +149,14 @@ describe('tickNewsIngest', () => {
       const r = await tickNewsIngest({
         db: ctx.db,
         triageQueue: triageQ,
+        extractQueue: extractQ,
         searchAdapter: fakeAdapter,
         skipRerank: true,
       })
       expect(r.newsFetched).toBeGreaterThanOrEqual(2)
       expect(r.newsInserted).toBeGreaterThanOrEqual(2)
-
-      const myCalls = calls.filter((c) => c.predictionId === seeded.predictionId)
-      expect(myCalls.length).toBeGreaterThanOrEqual(1)
+      // 每条 ingest'd news 都入 extract 队列(>= 2 条 newsId)
+      expect(extractCalls.length).toBeGreaterThanOrEqual(2)
     } finally {
       await ctx.cleanup()
     }

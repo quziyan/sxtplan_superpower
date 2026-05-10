@@ -30,9 +30,12 @@ export default function App() {
         onRoleChange={switchRole}
         onLogout={logout}
       />
-      <div className="app__body" key={refreshKey}>
-        {role === 'ANALYST'  && <AnalystView onOpenPrediction={setOpenPrediction} />}
-        {role === 'DECIDER'  && <DecisionView onOpenPrediction={setOpenPrediction} />}
+      <div className="app__body">
+        {/* 修:不再用 key={refreshKey} 强制重挂载;改成把 mutationVersion 作为
+            prop 传给每个角色视图,它们用 useEffect deps 触发自己的 refetch。
+            DOM 节点稳定 → 详情页 + 滚动位置 + 输入焦点都不丢。*/}
+        {role === 'ANALYST'  && <AnalystView  onOpenPrediction={setOpenPrediction} mutationVersion={refreshKey} />}
+        {role === 'DECIDER'  && <DecisionView onOpenPrediction={setOpenPrediction} mutationVersion={refreshKey} />}
         {role === 'REVIEWER' && <ReviewerView />}
         {!role && (
           <div className="empty" style={{ marginTop: 'var(--sp-8)' }}>
@@ -52,8 +55,9 @@ export default function App() {
             predictionId={openPrediction}
             activeRole={role}
             onMutated={() => {
-              setOpenPrediction(null)
-              setRefreshKey(k => k + 1)  // 强制重渲染当前角色视图
+              // 修(#3):不再关闭详情页,只 bump 信号让父级 list 知道刷
+              // PredictionDetail 自己 setData 已经在原地更新展示
+              setRefreshKey(k => k + 1)
             }}
           />
         )}
