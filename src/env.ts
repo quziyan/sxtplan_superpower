@@ -78,6 +78,11 @@ const EnvSchema = z.object({
   // 默认 30 天,可通过 .env 覆盖。
   NEWS_FRESHNESS_DAYS: z.coerce.number().min(1).max(365).default(30),
 
+  // --- 新闻相关性精排阈值(Plan-M 三段式)---
+  // 粗召回(Tavily/gov)→ 规则过滤 → LLM 精排打 0-100 → 此阈值截断。
+  // 默认 50:边缘相关以下被丢弃。范围 0-100,设 0 = 不精排(只过滤)。
+  RELEVANCE_THRESHOLD: z.coerce.number().int().min(0).max(100).default(50),
+
   // --- 阿里云 OSS (m3, EX-6) ---
   OSS_ADAPTER_KEY: z.enum(['mock', 'aliyun']).default('mock'),
   OSS_ENDPOINT: z.string().default('https://oss-cn-shenzhen.aliyuncs.com'),

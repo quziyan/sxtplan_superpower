@@ -37,8 +37,11 @@ async function seedWatchlistAndPrediction(
 }> {
   const stamp = `${Date.now()}-${Math.floor(Math.random() * 1e9)}`
   const userId = crypto.randomUUID()
-  const vName = `NIVehicle ${stamp}`
-  const tName = `NITask ${stamp}`
+  // Plan-M:fixture 名称要带 CJK 字符,否则 filterHits 的中文规则会丢弃
+  // 从 fakeAdapter 返回的 title(因为 title 内嵌 vName/tName)。同时缓解
+  // 长期 fixture 污染问题:V/T 表里塞英文字串。
+  const vName = `测试车型 ${stamp}`
+  const tName = `测试任务 ${stamp}`
 
   // regions row uses raw SQL because of PostGIS ST_GeomFromGeoJSON.
   const regionRows = await db.execute<{ id: string; version: number }>(sql`
@@ -153,6 +156,7 @@ describe('tickNewsIngest', () => {
         db: ctx.db,
         triageQueue: triageQ,
         searchAdapter: fakeAdapter,
+        skipRerank: true,
       })
       expect(r.newsFetched).toBeGreaterThanOrEqual(2)
       expect(r.newsInserted).toBeGreaterThanOrEqual(2)
@@ -175,9 +179,9 @@ describe('tickNewsIngest', () => {
       const fakeAdapter = {
         query: async () => [
           {
-            title: 'DupTest',
+            title: '去重测试新闻',  // CJK 必需(filterHits 中文规则)
             url,
-            snippet: 's',
+            snippet: '广州',
             source: { name: 'dedup.test', kind: 'mainstream' as const },
           },
         ],
@@ -187,6 +191,7 @@ describe('tickNewsIngest', () => {
         db: ctx.db,
         triageQueue: triageQ,
         searchAdapter: fakeAdapter,
+        skipRerank: true,
       })
       expect(r1.newsInserted).toBeGreaterThanOrEqual(1)
 
@@ -195,6 +200,7 @@ describe('tickNewsIngest', () => {
         db: ctx.db,
         triageQueue: triageQ,
         searchAdapter: fakeAdapter,
+        skipRerank: true,
       })
 
       const dups = await ctx.db.execute<{ n: number }>(sql`
@@ -226,7 +232,7 @@ describe('tickNewsIngest', () => {
           if (callIdx === 1) throw new Error('synthetic adapter failure')
           return [
             {
-              title: 'B-news',
+              title: '广州警方B类新闻',  // CJK 必需
               url: `https://b.test/${Date.now()}-${Math.random()}`,
               snippet: '',
               source: { name: 'b.test', kind: 'mainstream' as const },
@@ -240,6 +246,7 @@ describe('tickNewsIngest', () => {
         db: ctx.db,
         triageQueue: triageQ,
         searchAdapter: fakeAdapter,
+        skipRerank: true,
       })
       expect(r.errors).toBeGreaterThanOrEqual(1)
       expect(r.newsInserted).toBeGreaterThanOrEqual(1)
@@ -268,6 +275,7 @@ describe('tickNewsIngest', () => {
         db: ctx.db,
         triageQueue: triageQ,
         searchAdapter: fakeAdapter,
+        skipRerank: true,
       })
 
       // The watchlist we seeded with empty keywords should have V (NIVehicle…)
@@ -324,6 +332,7 @@ describe('tickNewsIngest', () => {
 
       const r = await tickNewsIngest({
         db: ctx.db, triageQueue: triageQ, searchAdapter: fakeAdapter,
+        skipRerank: true,
       })
       // 3 fetched(adapter raw count),但只 2 应该被 insert(老的丢)
       expect(r.newsFetched).toBe(3)

@@ -7,8 +7,10 @@ import { loadEnv } from '@/env'
 import { findMatchingPredictions } from '@/news/matcher'
 import { resolveKeywords } from '@/news/keyword-derive'
 import { ingestHit } from '@/news/normalizer'
+import { filterHits, rerankHits } from '@/news/relevance'
 import { getSearchAdapter } from '@/news/search-adapter'
 import type { SearchAdapter, SearchHit } from '@/news/types'
+import type { infer as inferFnType } from '@/inference/client'
 import { getNewsFreshnessDays } from '@/modules/settings/service'
 
 /**
@@ -50,6 +52,15 @@ export type NewsIngestDeps = {
    * 关联 watchlist 的即时新闻拉取)。default 不传 = 扫所有 active watchlist(原 tick 行为)。
    */
   onlyWatchlistId?: string
+  /**
+   * Plan-M:rerank LLM 注入。default 不传 = 用真实 dashscope。测试可传 fake
+   * 跳过 LLM 调用 / 强制 degraded 路径。
+   */
+  relevanceInferFn?: typeof inferFnType
+  /**
+   * Plan-M:跳过精排(只走规则过滤)。测试快路径 / 显式禁用 LLM 时用。
+   */
+  skipRerank?: boolean
 }
 
 export type NewsIngestTickResult = {
@@ -120,21 +131,45 @@ export async function tickNewsIngest(
       const keywords = resolveKeywords(wl, vc, tc, region)
       if (keywords.length === 0) continue
 
-      const hits: SearchHit[] = await adapter.query(keywords, { freshnessDays })
-      result.newsFetched += hits.length
+      const rawHits: SearchHit[] = await adapter.query(keywords, { freshnessDays })
+      result.newsFetched += rawHits.length
 
       // 时间窗防御性过滤:Tavily server-side `days` 参数已经过滤过一遍,
       // 这里再做客户端 cutoff 兜底 — 处理 server 漏放/缓存命中老数据的情况。
       // 策略:hit.publishedAt 已知且早于 cutoff → 丢弃;null/undefined → 保留(graceful)。
       const freshnessMs = freshnessDays * 86_400_000
       const cutoff = Date.now() - freshnessMs
+      const freshnessOk = rawHits.filter((h) => {
+        if (!h.url || !h.title) return false
+        if (h.publishedAt) {
+          const ts = Date.parse(h.publishedAt)
+          if (Number.isFinite(ts) && ts < cutoff) return false
+        }
+        return true
+      })
+
+      // Plan-M 三段式相关性过滤:粗召回 → 规则过滤 → LLM 精排
+      const ruleFiltered = filterHits(freshnessOk)
+      const regionLabel = region.name ?? '未知区域'
+      let hits: SearchHit[]
+      let rerankInfo = ''
+      if (deps.skipRerank) {
+        hits = ruleFiltered
+        rerankInfo = ' rerank=skipped'
+      } else {
+        const rerankOpts = deps.relevanceInferFn ? { inferFn: deps.relevanceInferFn } : {}
+        const reranked = await rerankHits(ruleFiltered, keywords.join(' '), regionLabel, rerankOpts)
+        hits = reranked.hits
+        rerankInfo = ` reranked=${reranked.kept}` + (reranked.degraded ? ' (LLM degraded)' : '')
+      }
+
+      console.log(
+        `[news-ingest] watchlist=${wl.id.slice(0, 8)} ` +
+        `raw=${rawHits.length} freshness_ok=${freshnessOk.length} ` +
+        `rule_filtered=${ruleFiltered.length}${rerankInfo}`,
+      )
 
       for (const hit of hits) {
-        if (!hit.url || !hit.title) continue
-        if (hit.publishedAt) {
-          const ts = Date.parse(hit.publishedAt)
-          if (Number.isFinite(ts) && ts < cutoff) continue
-        }
         const { news, isNew } = await ingestHit(deps.db, hit)
         if (!isNew) continue // dup URL — already triaged on a prior tick
         result.newsInserted++
