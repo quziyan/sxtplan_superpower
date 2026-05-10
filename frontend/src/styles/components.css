@@ -10,6 +10,13 @@
 .app__body {
   min-height: 0;
   overflow: hidden;
+  /* flex 让直接子(.page 或 .workspace)自动 fill,内部 overflow:auto 才能触发 */
+  display: flex;
+  flex-direction: column;
+}
+.app__body > * {
+  flex: 1;
+  min-height: 0;
 }
 
 .topbar {
@@ -209,6 +216,8 @@
   overflow: auto;
   background: var(--c-bg);
   position: relative;
+  height: 100%;       /* DecisionView/ReviewerView 直接挂 .app__body 时需要 */
+  min-height: 0;      /* flex/grid 父容器下确保滚动条触发 */
 }
 
 .workspace__header {
