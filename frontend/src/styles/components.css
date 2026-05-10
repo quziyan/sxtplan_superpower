@@ -341,13 +341,16 @@
   background: var(--c-panel-2); color: var(--c-text-2);
 }
 .status::before { content: ''; width: 5px; height: 5px; border-radius: 50%; background: currentColor; }
-.status--proposed   { color: #b0c0d8; background: rgba(176,192,216,0.10); }
-.status--validated  { color: var(--c-accent); background: var(--c-accent-soft, rgba(78,161,255,0.12)); }
-.status--approved   { color: var(--c-info); background: var(--c-info-soft); }
-.status--rejected   { color: var(--c-text-3); background: var(--c-panel-2); }
-.status--dispatched { color: var(--c-warn); background: var(--c-warn-soft); }
-.status--completed  { color: var(--c-ok); background: var(--c-ok-soft); }
-.status--expired    { color: var(--c-text-3); background: var(--c-panel-2); }
+/* Status pill colors driven by --c-stage-* tokens for cross-view consistency
+   (Schedule tab MonthView dots / WeekView chips / DayView accent borders all
+   read the same vars). color-mix gives the soft background tint per pill. */
+.status--proposed   { color: var(--c-stage-proposed);   background: color-mix(in srgb, var(--c-stage-proposed) 18%, transparent); }
+.status--validated  { color: var(--c-stage-validated);  background: color-mix(in srgb, var(--c-stage-validated) 18%, transparent); }
+.status--approved   { color: var(--c-stage-approved);   background: color-mix(in srgb, var(--c-stage-approved) 18%, transparent); }
+.status--rejected   { color: var(--c-stage-rejected);   background: color-mix(in srgb, var(--c-stage-rejected) 18%, transparent); }
+.status--dispatched { color: var(--c-stage-dispatched); background: color-mix(in srgb, var(--c-stage-dispatched) 18%, transparent); }
+.status--completed  { color: var(--c-stage-completed);  background: color-mix(in srgb, var(--c-stage-completed) 18%, transparent); }
+.status--expired    { color: var(--c-stage-expired);    background: color-mix(in srgb, var(--c-stage-expired) 18%, transparent); }
 
 /* Confidence bar */
 .cbar {

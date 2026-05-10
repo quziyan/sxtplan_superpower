@@ -51,6 +51,18 @@
 
   --shadow-1: 0 1px 0 rgba(255,255,255,0.03), 0 8px 24px -12px rgba(0,0,0,0.6);
   --shadow-2: 0 1px 0 rgba(255,255,255,0.04), 0 18px 40px -16px rgba(0,0,0,0.7);
+
+  /* Schedule tab — prediction lifecycle stage colors. Single source of truth
+     for every view that renders a status (Status pill, StageDot, StageChip,
+     left-border accent in DayView). Cross-view consistency is enforced by
+     all components reading from these vars rather than hardcoding hex. */
+  --c-stage-proposed:   #7e8ca0;
+  --c-stage-validated:  #3b82f6;
+  --c-stage-approved:   #22c55e;
+  --c-stage-rejected:   #ef4444;
+  --c-stage-dispatched: #a855f7;
+  --c-stage-completed:  #84cc16;
+  --c-stage-expired:    #4b5563;
 }
 
 /* Light theme — for tweaks */
@@ -77,4 +89,13 @@
   --c-bad-soft:     rgba(201,59,59,0.10);
   --c-info:         #6b4ae2;
   --c-info-soft:    rgba(107,74,226,0.10);
+
+  /* Stage colors — light theme overrides (validated/proposed share dark
+     values, others nudged for contrast on white). */
+  --c-stage-proposed:   #b0b8c5;
+  --c-stage-approved:   #16a34a;
+  --c-stage-rejected:   #dc2626;
+  --c-stage-dispatched: #9333ea;
+  --c-stage-completed:  #65a30d;
+  --c-stage-expired:    #6b7280;
 }
