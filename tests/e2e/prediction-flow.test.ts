@@ -135,11 +135,12 @@ describe('m2 prediction flow E2E', () => {
     expect(dispatch.externalId).toMatch(/^mock-/)
 
     // 7. Verify dispatch_tasks row exists.
-    // Plan-C T16+:approve 路由本身就会 triggerDispatch,所以批准后已有 1 条;
-    // 加上 step 6 显式 enqueueDispatch 又写入 1 条 — 总计 2 条。
+    // approve 路由的 triggerDispatchAfterApproval 把 job 入 BullMQ 队列,
+    // 但测试环境不跑 worker → job 残留 Redis,不写表;唯一的 dispatch_tasks
+    // 行来自 step 6 的显式 enqueueDispatch。totals = 1。
     const dispatchCount = await ctx.db.execute<{ n: number }>(sql`
       SELECT COUNT(*)::int AS n FROM dispatch_tasks WHERE prediction_id = ${predictionId}::uuid
     `)
-    expect((dispatchCount[0] as { n: number }).n).toBe(2)
+    expect((dispatchCount[0] as { n: number }).n).toBe(1)
   })
 })
