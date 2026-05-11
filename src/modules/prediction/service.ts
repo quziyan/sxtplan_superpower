@@ -1,7 +1,8 @@
-import { and, eq, gte, inArray, lte, sql } from 'drizzle-orm'
+import { and, eq, exists, gte, inArray, lte, sql } from 'drizzle-orm'
 import type { Db } from '@/db/client'
 import {
   confidenceSnapshots,
+  newsEvidence,
   newsItems,
   predictions,
   type ConfidenceSnapshot,
@@ -69,28 +70,19 @@ export async function listPredictions(
   opts: ListPredictionsOpts = {},
 ): Promise<PredictionListItem[]> {
   const limit = opts.limit ?? 100
-  // m5 UI:hasEvidence=true 时用 raw SQL 加 EXISTS,因 drizzle 的 .where 链不便组合
-  // status + EXISTS。保持简单,raw SQL 走得通就行。
-  if (opts.hasEvidence) {
-    const rawRows = await db.execute<typeof predictions.$inferSelect>(sql`
-      SELECT p.* FROM predictions p
-      WHERE EXISTS (SELECT 1 FROM news_evidence ne WHERE ne.prediction_id = p.id)
-        ${opts.status ? sql`AND p.status = ${opts.status}` : sql``}
-        ${opts.from ? sql`AND p.window_date >= ${opts.from}::date` : sql``}
-        ${opts.to ? sql`AND p.window_date <= ${opts.to}::date` : sql``}
-      ORDER BY p.created_at DESC
-      LIMIT ${limit}
-    `)
-    const rows = rawRows as unknown as Prediction[]
-    let out: PredictionListItem[] = rows
-    if (opts.includeLatestSnapshot && rows.length > 0) out = await attachLatestSnapshots(db, rows)
-    if (opts.includeNames && out.length > 0) out = await attachNames(db, out)
-    return out
-  }
+  // 统一走 drizzle typed select — 之前 hasEvidence 分支用 raw SQL `db.execute`
+  // 返回 snake_case 列名(window_date / confidence_now 等),前端 React 拿到字段
+  // 全是 undefined → .slice() 等访问崩溃 → 黑屏。改用 `exists()` 把 EXISTS 子查询
+  // 嵌进 drizzle 的 where 链,结果走 schema 序列化,自动 camelCase。
   const clauses = []
   if (opts.status) clauses.push(eq(predictions.status, opts.status))
   if (opts.from) clauses.push(gte(predictions.windowDate, new Date(opts.from + 'T00:00:00Z')))
   if (opts.to) clauses.push(lte(predictions.windowDate, new Date(opts.to + 'T00:00:00Z')))
+  if (opts.hasEvidence) {
+    clauses.push(exists(
+      db.select({ one: sql`1` }).from(newsEvidence).where(eq(newsEvidence.predictionId, predictions.id))
+    ))
+  }
   const whereExpr = clauses.length === 0 ? undefined
     : clauses.length === 1 ? clauses[0]
     : and(...clauses)
