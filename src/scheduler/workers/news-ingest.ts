@@ -7,31 +7,68 @@ import { loadEnv } from '@/env'
 import { findMatchingPredictions } from '@/news/matcher'
 import { resolveKeywords } from '@/news/keyword-derive'
 import { ingestHit } from '@/news/normalizer'
-import { filterHits, rerankHits } from '@/news/relevance'
+import { filterHits, rerankHits, type DropEntry } from '@/news/relevance'
 import { getSearchAdapter } from '@/news/search-adapter'
 import type { SearchAdapter, SearchHit } from '@/news/types'
 import type { infer as inferFnType } from '@/inference/client'
-import { getNewsFreshnessDays } from '@/modules/settings/service'
+import {
+  getNewsFreshnessDays,
+  getNewsRelevanceThreshold,
+  getNewsMaxToRerank,
+} from '@/modules/settings/service'
 
 /**
- * NewsIngest tick worker (Plan-E G2 + G4, m5).
+ * NewsIngest tick worker (Plan-E G2 + G4, m5; Plan-PP stages 添加).
  *
  * Pipeline per active watchlist:
- *   1. Resolve keywords (explicit `wl.keywords` overrides V/T/region-derived).
- *   2. Call SearchAdapter.query(keywords) → SearchHit[].
- *   3. ingestHit() handles dedup-by-URL + NOT-NULL columns (content_hash etc).
- *      Re-fetched URLs map to existing rows (isNew=false) — we skip them so
- *      we don't enqueue duplicate triage jobs for the same evidence.
- *   4. After insert, stamp `news.matched_regions = [wl.regionId]` so the
- *      matcher (which keys on matched_regions) can see this watchlist's
- *      region. This is the synchronous fast-path; m4 geocoder enrichment
- *      runs separately and may broaden matched_regions later.
- *   5. findMatchingPredictions(db, newsId) → MatchCandidate[]
- *   6. For each (prediction, news) pair, enqueue a triage job.
+ *   1. SEARCH       SearchAdapter.query(keywords) → rawHits
+ *   2. FRESHNESS    URL/title/cutoff 兜底过滤
+ *   3. RULE_FILTER  CJK / blocklist / 短标题
+ *   4. RERANK       LLM 打分,阈值截断(可 skip)
+ *   5. INGEST       ingestHit 去重 + 写库 + matched_regions
+ *   6. EXTRACT      由 spawn-from-news 路由 wrap(非 worker 内)
  *
- * Failure isolation: per-watchlist try/catch — one bad watchlist (e.g.
- * adapter throws, V/T missing) bumps `errors` and continues to the next.
+ * 失败隔离:per-watchlist try/catch,单 wl 失败不影响其他 wl。
+ *
+ * **Plan-PP**:每 wl 一次的 tick 现在还输出 `stages: StageTrace[]` —— 含
+ * 每阶段 in/out/duration/丢弃样本(每阶段每 wl ≤ 5 条),供前端 PipelinePanel
+ * 渲染流水线漏斗 + 解释「20 条新闻为何变 0 条预测」。
  */
+
+const DROP_SAMPLE_CAP = 5
+
+export type StageName =
+  | 'search'
+  | 'freshness'
+  | 'rule_filter'
+  | 'rerank'
+  | 'ingest'
+  | 'extract'
+
+/** Pipeline trace 中"保留"样本 — 通过本阶段、进入下阶段的代表条目。 */
+export type KeptEntry = {
+  url: string
+  title: string
+  /** Optional 解释:例如 rerank score、ingest 后的 news.id。 */
+  detail?: string
+}
+
+/** 流水线 trace 单元 — 一阶段一条,append 顺序就是流水线顺序。*/
+export type StageTrace = {
+  name: StageName
+  /** Optional 标签,例如 watchlist 名 — 多 wl 时用来区分。*/
+  watchlistName?: string
+  in: number
+  out: number
+  durationMs: number
+  params?: Record<string, unknown>
+  /** 被丢弃的代表样本,每阶段每运行 ≤ DROP_SAMPLE_CAP 条。 */
+  dropped: DropEntry[]
+  /** 通过本阶段、留下来的代表样本,每阶段每运行 ≤ DROP_SAMPLE_CAP 条。 */
+  kept: KeptEntry[]
+  /** Optional 备注(例如 LLM degraded、被跳过)。*/
+  note?: string
+}
 
 export type NewsTriageQueueLike = {
   add: (
@@ -40,7 +77,6 @@ export type NewsTriageQueueLike = {
   ) => Promise<unknown>
 }
 
-// 问题 #1 新流:每条新闻进 extract 队列触发 NewsExtractAgent 提取新预测
 export type NewsExtractQueueLike = {
   add: (name: string, data: { newsId: string }) => Promise<unknown>
 }
@@ -50,24 +86,17 @@ export type NewsIngestSearchAdapterLike = Pick<SearchAdapter, 'query'>
 export type NewsIngestDeps = {
   db: Db
   triageQueue: NewsTriageQueueLike
-  /** 问题 #1 新流:每条新闻还入这个队列触发 extract agent。可选,不传则跳过提取(legacy 模式)。*/
   extractQueue?: NewsExtractQueueLike
-  /** Override the SearchAdapter (e.g. tests). Defaults to env-selected adapter. */
   searchAdapter?: NewsIngestSearchAdapterLike
-  /**
-   * m5 UI 改进:scope to a single watchlist(用于 recompute-now 路由触发某 prediction
-   * 关联 watchlist 的即时新闻拉取)。default 不传 = 扫所有 active watchlist(原 tick 行为)。
-   */
   onlyWatchlistId?: string
-  /**
-   * Plan-M:rerank LLM 注入。default 不传 = 用真实 dashscope。测试可传 fake
-   * 跳过 LLM 调用 / 强制 degraded 路径。
-   */
   relevanceInferFn?: typeof inferFnType
-  /**
-   * Plan-M:跳过精排(只走规则过滤)。测试快路径 / 显式禁用 LLM 时用。
-   */
   skipRerank?: boolean
+}
+
+/** Plan-PP step 1:LLM 精排后的 hit + 它来自哪个 watchlist 的标注。 */
+export type HitWithWl = {
+  hit: SearchHit
+  watchlistId: string
 }
 
 export type NewsIngestTickResult = {
@@ -76,8 +105,32 @@ export type NewsIngestTickResult = {
   newsInserted: number
   triageJobsEnqueued: number
   errors: number
-  /** 本轮真正新进库的 news.id 列表(去重后)。spawn-from-news 路径用它做同步 drain extract。*/
+  /** 本轮真正新进库的 news.id 列表(isNew=true)。供需要"仅新数据"的下游用。*/
   newlyInsertedNewsIds: string[]
+  /** 本轮 LLM 精排通过的所有 news.id(包括 duplicate)。 */
+  processedNewsIds: string[]
+  /** Plan-PP step 1:LLM 精排后的 hits + 来源 wl,用于 spawn-from-news 路由
+   *  并行 extract(无需经过 ingest 拿 newsId)。 */
+  rerankedHits: HitWithWl[]
+  stages: StageTrace[]
+}
+
+function capDropped(arr: DropEntry[]): DropEntry[] {
+  return arr.slice(0, DROP_SAMPLE_CAP)
+}
+
+function sampleKept<T extends { url: string; title: string }>(
+  hits: T[],
+  detailFn?: (h: T, idx: number) => string | undefined,
+): KeptEntry[] {
+  return hits.slice(0, DROP_SAMPLE_CAP).map((h, i) => {
+    const e: KeptEntry = { url: h.url, title: h.title }
+    if (detailFn) {
+      const d = detailFn(h, i)
+      if (d !== undefined) e.detail = d
+    }
+    return e
+  })
 }
 
 export async function tickNewsIngest(
@@ -90,13 +143,18 @@ export async function tickNewsIngest(
     triageJobsEnqueued: 0,
     errors: 0,
     newlyInsertedNewsIds: [],
+    processedNewsIds: [],
+    rerankedHits: [],
+    stages: [],
   }
 
   const adapter: NewsIngestSearchAdapterLike =
     deps.searchAdapter ?? getSearchAdapter()
 
-  // 单 tick 内只读一次 setting,避免每个 watchlist 都 round-trip。
+  // 单 tick 内只读一次 setting
   const freshnessDays = await getNewsFreshnessDays(deps.db)
+  const relevanceThreshold = await getNewsRelevanceThreshold(deps.db)
+  const maxToRerank = await getNewsMaxToRerank(deps.db)
 
   const activeWls = deps.onlyWatchlistId
     ? await deps.db
@@ -111,8 +169,6 @@ export async function tickNewsIngest(
   for (const wl of activeWls) {
     result.watchlistsScanned++
     try {
-      // Load V / T rows for keyword-derive fallback. region.name comes from a
-      // versioned regions row, so we read it via raw SQL on (id, version).
       const [vc] = await deps.db
         .select()
         .from(vehicleClasses)
@@ -122,9 +178,7 @@ export async function tickNewsIngest(
         .from(taskClasses)
         .where(eq(taskClasses.id, wl.taskClassId))
       if (!vc || !tc) {
-        console.warn(
-          `[news-ingest] watchlist ${wl.id}: V/T not found; skipping`,
-        )
+        console.warn(`[news-ingest] watchlist ${wl.id}: V/T not found; skipping`)
         result.errors++
         continue
       }
@@ -134,69 +188,174 @@ export async function tickNewsIngest(
         LIMIT 1
       `)
       const region =
-        (regRows as unknown as Array<{ name: string | null }>)[0] ?? {
-          name: null,
-        }
+        (regRows as unknown as Array<{ name: string | null }>)[0] ?? { name: null }
 
       const keywords = resolveKeywords(wl, vc, tc, region)
       if (keywords.length === 0) continue
 
+      // ── Stage 1: SEARCH ─────────────────────────────────────────────
+      const t0 = performance.now()
       const rawHits: SearchHit[] = await adapter.query(keywords, { freshnessDays })
+      const t1 = performance.now()
       result.newsFetched += rawHits.length
-
-      // 时间窗防御性过滤:Tavily server-side `days` 参数已经过滤过一遍,
-      // 这里再做客户端 cutoff 兜底 — 处理 server 漏放/缓存命中老数据的情况。
-      // 策略:hit.publishedAt 已知且早于 cutoff → 丢弃;null/undefined → 保留(graceful)。
-      const freshnessMs = freshnessDays * 86_400_000
-      const cutoff = Date.now() - freshnessMs
-      const freshnessOk = rawHits.filter((h) => {
-        if (!h.url || !h.title) return false
-        if (h.publishedAt) {
-          const ts = Date.parse(h.publishedAt)
-          if (Number.isFinite(ts) && ts < cutoff) return false
-        }
-        return true
+      result.stages.push({
+        name: 'search',
+        watchlistName: wl.name,
+        in: 0,
+        out: rawHits.length,
+        durationMs: Math.round(t1 - t0),
+        params: { keywords, freshnessDays },
+        dropped: [],
+        kept: sampleKept(rawHits),
       })
 
-      // Plan-M 三段式相关性过滤:粗召回 → 规则过滤 → LLM 精排
-      const ruleFiltered = filterHits(freshnessOk)
+      // ── Stage 2: FRESHNESS ──────────────────────────────────────────
+      const t2 = performance.now()
+      const freshnessMs = freshnessDays * 86_400_000
+      const cutoff = Date.now() - freshnessMs
+      const freshnessOk: SearchHit[] = []
+      const freshnessDropped: DropEntry[] = []
+      for (const h of rawHits) {
+        if (!h.url) {
+          freshnessDropped.push({ url: '', title: h.title ?? '', reason: 'no-url' })
+          continue
+        }
+        if (!h.title) {
+          freshnessDropped.push({ url: h.url, title: '', reason: 'no-title' })
+          continue
+        }
+        // Plan-PP fix3:严格卡发布时间。无 publishedAt → drop unknown-date。
+        // Tavily adapter 已经做了 HTML 兜底抓取,到这里还没日期就真的没救了。
+        if (!h.publishedAt) {
+          freshnessDropped.push({ url: h.url, title: h.title, reason: 'unknown-date' })
+          continue
+        }
+        const ts = Date.parse(h.publishedAt)
+        if (!Number.isFinite(ts)) {
+          freshnessDropped.push({
+            url: h.url, title: h.title, reason: 'unknown-date',
+            detail: `unparseable: ${h.publishedAt}`,
+          })
+          continue
+        }
+        if (ts < cutoff) {
+          freshnessDropped.push({
+            url: h.url, title: h.title, reason: 'expired',
+            detail: h.publishedAt,
+          })
+          continue
+        }
+        freshnessOk.push(h)
+      }
+      const t3 = performance.now()
+      result.stages.push({
+        name: 'freshness',
+        watchlistName: wl.name,
+        in: rawHits.length,
+        out: freshnessOk.length,
+        durationMs: Math.round(t3 - t2),
+        params: { freshnessDays, cutoffMs: cutoff },
+        dropped: capDropped(freshnessDropped),
+        kept: sampleKept(freshnessOk, (h) => h.publishedAt),
+      })
+
+      // ── Stage 3: RULE_FILTER ────────────────────────────────────────
+      const t4 = performance.now()
+      const { kept: ruleFiltered, dropped: ruleDropped } = filterHits(freshnessOk)
+      const t5 = performance.now()
+      result.stages.push({
+        name: 'rule_filter',
+        watchlistName: wl.name,
+        in: freshnessOk.length,
+        out: ruleFiltered.length,
+        durationMs: Math.round(t5 - t4),
+        params: { cn_domain_gate: true, whitelist_count: 30, blocklist_count: 21, cn_tld_suffixes: 6, min_title_len: 4 },
+        dropped: capDropped(ruleDropped),
+        kept: sampleKept(ruleFiltered),
+      })
+
+      // ── Stage 4: RERANK ─────────────────────────────────────────────
       const regionLabel = region.name ?? '未知区域'
       let hits: SearchHit[]
-      let rerankInfo = ''
+      const t6 = performance.now()
       if (deps.skipRerank) {
         hits = ruleFiltered
-        rerankInfo = ' rerank=skipped'
+        const t7 = performance.now()
+        result.stages.push({
+          name: 'rerank',
+          watchlistName: wl.name,
+          in: ruleFiltered.length,
+          out: ruleFiltered.length,
+          durationMs: Math.round(t7 - t6),
+          params: { skipped: true },
+          dropped: [],
+          kept: sampleKept(ruleFiltered),
+          note: 'rerank=skipped',
+        })
       } else {
-        const rerankOpts = deps.relevanceInferFn ? { inferFn: deps.relevanceInferFn } : {}
+        const rerankOpts = {
+          threshold: relevanceThreshold,
+          maxToRerank,
+          ...(deps.relevanceInferFn ? { inferFn: deps.relevanceInferFn } : {}),
+        }
         const reranked = await rerankHits(ruleFiltered, keywords.join(' '), regionLabel, rerankOpts)
         hits = reranked.hits
-        rerankInfo = ` reranked=${reranked.kept}` + (reranked.degraded ? ' (LLM degraded)' : '')
+        const t7 = performance.now()
+        result.stages.push({
+          name: 'rerank',
+          watchlistName: wl.name,
+          in: ruleFiltered.length,
+          out: reranked.kept,
+          durationMs: Math.round(t7 - t6),
+          params: {
+            threshold: reranked.thresholdUsed,
+            maxToRerank: reranked.maxToRerankUsed,
+            degraded: reranked.degraded,
+          },
+          dropped: capDropped(reranked.dropped),
+          kept: sampleKept(reranked.hits),
+          ...(reranked.degraded ? { note: 'LLM degraded — filter-only fallback' } : {}),
+        })
       }
 
       console.log(
         `[news-ingest] watchlist=${wl.id.slice(0, 8)} ` +
         `raw=${rawHits.length} freshness_ok=${freshnessOk.length} ` +
-        `rule_filtered=${ruleFiltered.length}${rerankInfo}`,
+        `rule_filtered=${ruleFiltered.length} reranked=${hits.length}`,
       )
 
+      // Plan-PP step 1:rerank 通过的每条 hit 记录到 result.rerankedHits 供
+      // 并行 extract 路径直接消费(不依赖 ingest 后才能拿到的 newsId)
+      for (const h of hits) {
+        result.rerankedHits.push({ hit: h, watchlistId: wl.id })
+      }
+
+      // ── Stage 5: INGEST ─────────────────────────────────────────────
+      const t8 = performance.now()
+      const ingestDropped: DropEntry[] = []
+      const ingestKept: KeptEntry[] = []
+      let ingestNew = 0
       for (const hit of hits) {
         const { news, isNew } = await ingestHit(deps.db, hit)
-        if (!isNew) continue // dup URL — already processed on a prior tick
+        // Plan-PP fix(#3.1):无论 isNew 与否,都把 news.id 加入 processedNewsIds —
+        // 后续抽取预测对所有通过 LLM 精排的新闻跑(不被去重阻塞)。
+        result.processedNewsIds.push(news.id)
+        if (!isNew) {
+          ingestDropped.push({ url: hit.url, title: hit.title, reason: 'duplicate' })
+          continue
+        }
+        ingestNew++
         result.newsInserted++
         result.newlyInsertedNewsIds.push(news.id)
+        if (ingestKept.length < DROP_SAMPLE_CAP) {
+          ingestKept.push({ url: hit.url, title: hit.title, detail: `news.id=${news.id.slice(0, 8)}` })
+        }
 
-        // Stamp matched_regions with this watchlist's region so downstream
-        // (extract / triage / matcher) can see it.
         await deps.db
           .update(newsItems)
           .set({ matchedRegions: [wl.regionId] })
           .where(eq(newsItems.id, news.id))
 
-        // 双路径(问题 #1 反向流之后):
-        //  (A) 对每条 ingest'd news 入 extract 队列 → LLM 决定是否从该新闻
-        //      派生 N 个 NEW prediction(各带 evidence + 初始置信度)
-        //  (B) 同时,若该 news 区域已有 EXISTING prediction → 入 triage 队列
-        //      做增量证据评估(MED+ 写 evidence,HIGH 触发 INCR refresh)
         if (deps.extractQueue) {
           await deps.extractQueue.add('extract', { newsId: news.id })
         }
@@ -210,6 +369,16 @@ export async function tickNewsIngest(
           result.triageJobsEnqueued++
         }
       }
+      const t9 = performance.now()
+      result.stages.push({
+        name: 'ingest',
+        watchlistName: wl.name,
+        in: hits.length,
+        out: ingestNew,
+        durationMs: Math.round(t9 - t8),
+        dropped: capDropped(ingestDropped),
+        kept: ingestKept,
+      })
     } catch (err) {
       console.error(`[news-ingest] watchlist ${wl.id} failed:`, err)
       result.errors++
@@ -220,9 +389,6 @@ export async function tickNewsIngest(
 }
 
 export function defaultNewsIngestDeps(): NewsIngestDeps {
-  // Lazy require so import-time does not pull BullMQ / Redis when tests stub
-  // out the queue. `newsTriageQueue` is added to scheduler/queue.ts in Task 9.
-  // newsExtractQueue (问题 #1) — 反向流的下游队列。
   const queueMod = require('../queue') as {
     newsTriageQueue?: NewsTriageQueueLike
     newsExtractQueue?: NewsExtractQueueLike
@@ -240,12 +406,6 @@ export function defaultNewsIngestDeps(): NewsIngestDeps {
   }
 }
 
-/**
- * Schedule the newsIngest tick. Default cadence reads
- * `env.NEWS_INGEST_INTERVAL_MIN` (default 15 minutes — long enough to stay
- * under per-key search-API rate budgets, short enough to keep news lag
- * bounded). Override `intervalMs` for tests / ops experiments.
- */
 export function scheduleNewsIngestTick(
   deps: NewsIngestDeps = defaultNewsIngestDeps(),
   intervalMs?: number,

@@ -214,6 +214,34 @@ export async function spawnFromNews(): Promise<SpawnFromNewsResult> {
   })
 }
 
+// Plan-PP:pipeline stage trace(spawn-from-news 响应含 6 阶段漏斗)
+export type StageName = 'search' | 'freshness' | 'rule_filter' | 'rerank' | 'ingest' | 'extract'
+export type StageDropReason =
+  | 'no-url' | 'no-title' | 'short-title' | 'no-cjk' | 'blocklist'
+  | 'expired' | 'duplicate' | 'below-threshold' | 'over-cap'
+export type StageDropEntry = {
+  url: string
+  title: string
+  reason: StageDropReason
+  detail?: string
+}
+export type StageKeptEntry = {
+  url: string
+  title: string
+  detail?: string
+}
+export type StageTrace = {
+  name: StageName
+  watchlistName?: string
+  in: number
+  out: number
+  durationMs: number
+  params?: Record<string, unknown>
+  dropped: StageDropEntry[]
+  kept: StageKeptEntry[]
+  note?: string
+}
+
 // 单 watchlist 版 — 前端按列表串行调,每条返回后展示进度
 export type SpawnFromNewsForWatchlistResult = {
   ok: boolean
@@ -227,6 +255,7 @@ export type SpawnFromNewsForWatchlistResult = {
   llmDegraded: number
   skipped?: boolean
   reason?: string
+  stages?: StageTrace[]
 }
 export async function spawnFromNewsForWatchlist(watchlistId: string): Promise<SpawnFromNewsForWatchlistResult> {
   return api<SpawnFromNewsForWatchlistResult>(`/predictions/spawn-from-news/${watchlistId}`, {

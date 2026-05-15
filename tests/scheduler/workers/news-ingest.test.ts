@@ -282,9 +282,10 @@ describe('tickNewsIngest', () => {
     }
   })
 
-  // 时效窗口防御性过滤:NEWS_FRESHNESS_DAYS=30 时,publishedAt 早于 30 天前的命中应被丢弃。
-  // null/undefined publishedAt 视为新鲜(graceful — 大量中文站缺失发布日期元数据)。
-  test('freshness filter: publishedAt 早于 NEWS_FRESHNESS_DAYS 的命中被丢弃', async () => {
+  // 时效窗口严格过滤(Plan-PP fix3):NEWS_FRESHNESS_DAYS=30 时,publishedAt
+  // 早于 30 天前 → expired drop;publishedAt 缺失 → unknown-date drop。
+  // Tavily adapter 已经做 HTML 兜底抓取,到 freshness stage 还没日期就真的没救。
+  test('freshness filter: 过期 + 无日期 都被严格丢弃', async () => {
     const ctx = await createTestDb()
     try {
       await deactivateAllWatchlists(ctx.db)
@@ -314,7 +315,7 @@ describe('tickNewsIngest', () => {
             snippet: 'new', publishedAt: fiveDaysAgo,
             source: { name: 'fresh.test', kind: 'mainstream' as const },
           },
-          // 缺日期 — graceful 留(server-side `days` 过滤已经过一遍)
+          // 缺日期 — Plan-PP fix3:严格丢弃(无 publishedAt = unknown-date)
           {
             title: `${seeded.vName} 无日期 ${stamp}`,
             url: `https://nopub.test/x?t=${stamp}`,
@@ -328,9 +329,9 @@ describe('tickNewsIngest', () => {
         db: ctx.db, triageQueue: triageQ, searchAdapter: fakeAdapter,
         skipRerank: true,
       })
-      // 3 fetched(adapter raw count),但只 2 应该被 insert(老的丢)
+      // 3 fetched,只有 5-days-ago 一条通过 freshness;过期 + 无日期均丢。
       expect(r.newsFetched).toBe(3)
-      expect(r.newsInserted).toBe(2)
+      expect(r.newsInserted).toBe(1)
     } finally {
       await ctx.cleanup()
     }

@@ -1,5 +1,6 @@
 import { Hono } from 'hono'
 import { cors } from 'hono/cors'
+import { serveStatic } from 'hono/bun'
 import type { ContentfulStatusCode } from 'hono/utils/http-status'
 import { authRoutes } from '@/auth/routes'
 import { regionRoutes } from '@/modules/region/routes'
@@ -10,6 +11,7 @@ import { predictionRoutes } from '@/modules/prediction/routes'
 import { retrospectiveRoutes } from '@/modules/retrospective/routes'
 import { webhookRoutes } from '@/webhook/routes'
 import { settingsRoutes } from '@/modules/settings/routes'
+import { adminRoutes } from '@/modules/admin/routes'
 import { demoRoutes } from '@/__demo/routes'
 import { createDb } from '@/db/client'
 import { loadEnv } from '@/env'
@@ -20,6 +22,8 @@ import { getOssAdapter } from '@/media/oss-adapter-pool'
 const env = loadEnv()
 const { db } = createDb('app')
 
+// Plan-PP docker:全部 API 路由挂在 `/api/*` 下,根路径用静态文件兜底服务前端 SPA。
+// 这样单容器即可同时跑后端 + 前端,前端 `BASE='/api'` 与生产路径一致。
 const app = new Hono()
 
 app.use('*', async (c, next) => {
@@ -41,25 +45,21 @@ app.onError((err, c) => {
   return c.json({ error: { code: 'INTERNAL', message: 'internal error' } }, 500)
 })
 
-app.get('/health', (c) => c.json({ status: 'ok', ts: new Date().toISOString() }))
+const api = new Hono()
 
-// Static dev endpoint serving placeholder JPG bytes for simulated media URLs.
-// Used by SimulatedGuangzhouPoliceCamAdapter and similar in-process simulators
-// that emit fake media URLs the MediaFetcher must dereference.
+api.get('/health', (c) => c.json({ status: 'ok', ts: new Date().toISOString() }))
+
 const PLACEHOLDER_JPG = Buffer.from(
   '/9j/4AAQSkZJRgABAQEAAAAAAAD/2wBDAAEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQH/wAARCAABAAEDASIAAhEBAxEB/8QAFQABAQAAAAAAAAAAAAAAAAAAAAr/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/8QAFAEBAAAAAAAAAAAAAAAAAAAAAP/EABQRAQAAAAAAAAAAAAAAAAAAAAD/2gAMAwEAAhEDEQA/AL+AAAA//9k=',
   'base64',
 )
 
-app.get('/static/sim-media/:filename', (c) => {
+api.get('/static/sim-media/:filename', (c) => {
   c.header('Content-Type', 'image/jpeg')
   return c.body(PLACEHOLDER_JPG)
 })
 
-// Static dev endpoint backing MockOssAdapter.signedUrl. Only active when
-// OSS_ADAPTER_KEY=mock — production aliyun config gets a 404 so a stray
-// request can't accidentally probe internal storage layout.
-app.get('/static/mock-oss/:key', async (c) => {
+api.get('/static/mock-oss/:key', async (c) => {
   const adapter = getOssAdapter()
   if (adapter.key !== 'mock') {
     return c.json({ error: 'mock OSS not active' }, 404)
@@ -74,27 +74,46 @@ app.get('/static/mock-oss/:key', async (c) => {
   }
 })
 
-app.route('/auth', authRoutes(db))
-app.route('/regions', regionRoutes(db))
-app.route('/taxonomy', taxonomyRoutes(db))
-app.route('/watchlists', watchlistRoutes(db))
-app.route('/taskcards', taskcardRoutes(db))
-app.route('/predictions', predictionRoutes(db))
-app.route('/retrospectives', retrospectiveRoutes(db))
-app.route('/webhook', webhookRoutes(db))
-app.route('/settings', settingsRoutes(db))
+api.route('/auth', authRoutes(db))
+api.route('/regions', regionRoutes(db))
+api.route('/taxonomy', taxonomyRoutes(db))
+api.route('/watchlists', watchlistRoutes(db))
+api.route('/taskcards', taskcardRoutes(db))
+api.route('/predictions', predictionRoutes(db))
+api.route('/retrospectives', retrospectiveRoutes(db))
+api.route('/webhook', webhookRoutes(db))
+api.route('/settings', settingsRoutes(db))
+api.route('/admin', adminRoutes(db))
 
-// Plan-C T37 / Slice 0 — customer demo helpers.
-// 收紧门控(L3 修复):仅在 NODE_ENV != production AND DEBUG_ROUTES=true 时挂载。
-// 之前只 NODE_ENV 一道闸,本地开发也会无意暴露 /__demo/seed-prediction 路径
-// 创建无证据预测,违反 #1 原则。现在必须显式 DEBUG_ROUTES=true 才能用。
 const debugRoutesEnabled = env.NODE_ENV !== 'production' && process.env.DEBUG_ROUTES === 'true'
 if (debugRoutesEnabled) {
-  app.route('/__demo', demoRoutes(db))
-  logger.info('demo routes mounted (DEBUG_ROUTES=true)', { path: '/__demo' })
+  api.route('/__demo', demoRoutes(db))
+  logger.info('demo routes mounted (DEBUG_ROUTES=true)', { path: '/api/__demo' })
 } else {
   logger.info('demo routes NOT mounted (set DEBUG_ROUTES=true to enable in dev)')
 }
+
+// API namespace 挂载
+app.route('/api', api)
+
+// Plan-PP docker:静态文件兜底 — 服务 frontend/dist。SPA fallback 让任意未匹配
+// 路径(/admin, /analyst 等假 URL)返回 index.html,由前端 router 接管。
+// Plan-PP fix11:缓存策略 — /assets/* hash 命名 → immutable;index.html → no-cache
+const FRONTEND_DIST = process.env.FRONTEND_DIST ?? './frontend/dist'
+app.use('/assets/*', async (c, next) => {
+  await next()
+  c.header('Cache-Control', 'public, max-age=31536000, immutable')
+})
+app.use('/*', serveStatic({ root: FRONTEND_DIST }))
+app.get('*', async (c) => {
+  try {
+    const html = await Bun.file(`${FRONTEND_DIST}/index.html`).text()
+    c.header('Cache-Control', 'no-cache, no-store, must-revalidate')
+    return c.html(html)
+  } catch {
+    return c.text('frontend dist not built — run `cd frontend && bun run build`', 503)
+  }
+})
 
 logger.info('server starting', { port: env.PORT })
 

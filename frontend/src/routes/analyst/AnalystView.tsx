@@ -1,16 +1,19 @@
 import { useEffect, useState } from 'react'
 import { Btn, Icon, KpiRow, PageHeader, PredictionTable } from '@/components'
-import { listPredictions, type Prediction } from '@/lib/prediction-api'
+import { listPredictions, type Prediction, type StageTrace } from '@/lib/prediction-api'
 import { listWatchLists, type WatchList } from '@/lib/watchlist-api'
 import { listTaskCards, type TaskCard } from '@/lib/taskcard-api'
-import { listVehicleClasses, listTaskClasses, type VehicleClass, type TaskClass } from '@/lib/taxonomy-api'
+import { listVehicleClasses, listTaskClasses, getFollowedVehicleClasses, type VehicleClass, type TaskClass } from '@/lib/taxonomy-api'
 import { listRegions, type RegionListItem } from '@/lib/region-api'
-import { getNewsFreshnessDays, setNewsFreshnessDays } from '@/lib/settings-api'
-import { recomputeNow, spawnFromNewsForWatchlist, deletePrediction, updatePrediction } from '@/lib/prediction-api'
+import { recomputeNow, spawnFromNewsForWatchlist, deletePrediction, updatePrediction, validatePrediction } from '@/lib/prediction-api'
 import { EditPredictionModal } from './EditPredictionModal'
 import type { PredictionTableRow } from '@/components/PredictionTable'
+import { isExpiredWindow } from '@/components/PredictionTable'
 import { NewWatchListModal } from './NewWatchListModal'
 import { NewTaskCardModal } from './NewTaskCardModal'
+import { PipelinePanel } from './PipelinePanel'
+import { ThresholdEditor } from './ThresholdEditor'
+import { KeywordsModal } from './KeywordsModal'
 
 export function AnalystView({ onOpenPrediction, mutationVersion = 0 }: {
   onOpenPrediction?: (id: string) => void
@@ -28,10 +31,13 @@ export function AnalystView({ onOpenPrediction, mutationVersion = 0 }: {
   const [activeWatchlist, setActiveWatchlist] = useState<string>('all')
   const [newModalOpen, setNewModalOpen] = useState(false)
   const [taskCardModalOpen, setTaskCardModalOpen] = useState(false)
-  // 证据新闻时效窗口(天)。从后端 GET /settings/news-freshness-days 读;PUT 更新。
-  const [freshnessDays, setFreshnessDays] = useState<number | null>(null)
-  const [freshnessDraft, setFreshnessDraft] = useState<string>('')
-  const [freshnessSaving, setFreshnessSaving] = useState(false)
+  const [keywordsModalWl, setKeywordsModalWl] = useState<WatchList | null>(null)
+  // Plan-PP:阈值编辑器现独立组件 ThresholdEditor,不在顶栏 inline
+  // 最近一次 spawn 的 stage trace(每 wl 一组,UI 平铺展示)
+  const [pipelineStages, setPipelineStages] = useState<Array<{ wlId: string; wlName: string; stages: StageTrace[] }>>([])
+  // Plan-PP:用户关注的 V 集合 — 默认过滤预测列表
+  const [followedVIds, setFollowedVIds] = useState<Set<string>>(new Set())
+  const [filterByFollowed, setFilterByFollowed] = useState(true)
   // 批量重算进度。null = 空闲;{ done, total, currentId, failed } = 重算中。
   const [batchProgress, setBatchProgress] = useState<
     { done: number; total: number; currentId: string | null; failed: number; finished?: boolean }
@@ -54,6 +60,17 @@ export function AnalystView({ onOpenPrediction, mutationVersion = 0 }: {
   // 编辑 modal + 删除处理
   const [editingRow, setEditingRow] = useState<PredictionTableRow | null>(null)
   const [actionFlash, setActionFlash] = useState<string | null>(null)
+  // 批量推送选择 + 进度。selectedIds 只装 status=PROPOSED 的行 id。
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
+  const [pushProgress, setPushProgress] = useState<
+    { done: number; total: number; currentId: string | null; failed: number; finished?: boolean }
+    | null
+  >(null)
+  // 批量删除进度(同选中集合,但操作不同)
+  const [deleteProgress, setDeleteProgress] = useState<
+    { done: number; total: number; currentId: string | null; failed: number; finished?: boolean }
+    | null
+  >(null)
 
   // Refetch watchlists after a new one is created via the modal. Predictions
   // don't change when a watchlist is created (no signals attached yet) so we
@@ -88,8 +105,8 @@ export function AnalystView({ onOpenPrediction, mutationVersion = 0 }: {
         setRegionMap(new Map(rs.map(r => [r.id, r])))
       })
       .catch(console.error)
-    getNewsFreshnessDays()
-      .then(d => { setFreshnessDays(d); setFreshnessDraft(String(d)) })
+    getFollowedVehicleClasses()
+      .then(ids => setFollowedVIds(new Set(ids)))
       .catch(console.error)
   }, [])
 
@@ -126,12 +143,99 @@ export function AnalystView({ onOpenPrediction, mutationVersion = 0 }: {
     }, 12_000)
   }
 
+  // 批量推送:对选中的 PROPOSED prediction,串行调 validate(PROPOSED → VALIDATED)。
+  // 完成后从 selectedIds 清掉、refetch 列表(VALIDATED 会从 PROPOSED 视图消失)。
+  const onBatchPush = async () => {
+    if (selectedIds.size === 0 || pushProgress) return
+    const ids = Array.from(selectedIds)
+    const total = ids.length
+    if (total > 1 && !confirm(`将串行推送 ${total} 条预测给决策者(状态 PROPOSED → VALIDATED),继续?`)) return
+    setPushProgress({ done: 0, total, currentId: null, failed: 0 })
+    let failed = 0
+    for (let i = 0; i < ids.length; i++) {
+      const id = ids[i]!
+      setPushProgress({ done: i, total, currentId: id, failed })
+      try {
+        await validatePrediction(id)
+      } catch (err) {
+        console.error(`[batch-push] ${id} failed:`, err)
+        failed++
+      }
+    }
+    setPushProgress({ done: total, total, currentId: null, failed, finished: true })
+    try {
+      const fresh = await listPredictions({ status: 'PROPOSED', limit: 100, includeLatestSnapshot: true, hasEvidence: true })
+      setPredictions(fresh)
+    } catch (e) { console.error(e) }
+    setSelectedIds(new Set())
+    setActionFlash(failed === 0 ? `✓ 已推送 ${total} 条给决策者` : `⚠ 推送 ${total - failed}/${total} 成功,${failed} 失败`)
+    setTimeout(() => setActionFlash(null), 6000)
+    setTimeout(() => setPushProgress(null), 4000)
+  }
+
+  // 批量删除:对选中的 PROPOSED prediction,串行调 deletePrediction(硬删 + 级联)。
+  // 删除是不可逆操作 → 要求二次确认且必须打字 "DELETE"。
+  const onBatchDelete = async () => {
+    if (selectedIds.size === 0 || deleteProgress) return
+    const ids = Array.from(selectedIds)
+    const total = ids.length
+    const typed = window.prompt(
+      `将永久删除 ${total} 条预测(硬删,级联删除关联快照/证据,不可恢复)。\n输入 DELETE 确认:`,
+      '',
+    )
+    if (typed !== 'DELETE') return
+    setDeleteProgress({ done: 0, total, currentId: null, failed: 0 })
+    let failed = 0
+    for (let i = 0; i < ids.length; i++) {
+      const id = ids[i]!
+      setDeleteProgress({ done: i, total, currentId: id, failed })
+      try {
+        await deletePrediction(id)
+      } catch (err) {
+        console.error(`[batch-delete] ${id} failed:`, err)
+        failed++
+      }
+    }
+    setDeleteProgress({ done: total, total, currentId: null, failed, finished: true })
+    try {
+      const fresh = await listPredictions({ status: 'PROPOSED', limit: 100, includeLatestSnapshot: true, hasEvidence: true })
+      setPredictions(fresh)
+    } catch (e) { console.error(e) }
+    setSelectedIds(new Set())
+    setActionFlash(failed === 0 ? `✓ 已删除 ${total} 条` : `⚠ 删除 ${total - failed}/${total} 成功,${failed} 失败`)
+    setTimeout(() => setActionFlash(null), 6000)
+    setTimeout(() => setDeleteProgress(null), 4000)
+  }
+
+  // 选择 toggle 辅助
+  const onToggleSelect = (id: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+  const onToggleSelectAll = (allSelected: boolean) => {
+    if (allSelected) {
+      setSelectedIds(new Set())
+    } else {
+      // 选当前 filtered 中所有 PROPOSED 且未过期的行
+      setSelectedIds(new Set(
+        filtered
+          .filter((p) => p.status === 'PROPOSED' && !isExpiredWindow(p.windowDate.slice(0, 10)))
+          .map((p) => p.id),
+      ))
+    }
+  }
+
   // (β) 「📡 生成预测」 — 前端按 active watchlist 串行调 per-wl 路由,
   // 每个 wl 后端做 ① scoped tickNewsIngest ② 并发 3 drain extract。
   // UI 显示进度条:处理中 N/M · 当前 [天河区...] · 累计抓 X 条新闻 / 新建 Y 预测
   const onSpawnAll = async () => {
     if (spawnProgress && !spawnProgress.finished) return
     setSpawnFlash(null)
+    setPipelineStages([])  // 新一轮 spawn 清空旧 trace
     const activeWls = watchlists.filter(w => w.isActive)
     if (activeWls.length === 0) {
       setSpawnFlash('✗ 没有 active watchlist,请先创建/激活')
@@ -139,6 +243,7 @@ export function AnalystView({ onOpenPrediction, mutationVersion = 0 }: {
       return
     }
     let totalsCreated = 0, totalsMerged = 0, totalsNewsFetched = 0, totalsNewsInserted = 0, failed = 0
+    const collectedStages: Array<{ wlId: string; wlName: string; stages: StageTrace[] }> = []
     setSpawnProgress({
       done: 0, total: activeWls.length, currentName: null,
       totalsCreated, totalsMerged, totalsNewsFetched, totalsNewsInserted, failed: 0,
@@ -155,6 +260,21 @@ export function AnalystView({ onOpenPrediction, mutationVersion = 0 }: {
         totalsMerged += r.predictionsMerged
         totalsNewsFetched += r.newsFetched
         totalsNewsInserted += r.newsInserted
+        if (r.stages && r.stages.length > 0) {
+          collectedStages.push({ wlId: wl.id, wlName: wl.name, stages: r.stages })
+          setPipelineStages([...collectedStages])  // incremental render
+        }
+        // Plan-PP fix(#2):本条 wl 产生了 created/merged → 立即 refetch 预测列表
+        // 让分析师看着数字往上涨,不必等全部 wl 跑完
+        if (r.predictionsCreated > 0 || r.predictionsMerged > 0) {
+          try {
+            const fresh = await listPredictions({
+              status: 'PROPOSED', limit: 100,
+              includeLatestSnapshot: true, hasEvidence: true,
+            })
+            setPredictions(fresh)
+          } catch (e) { console.error('[spawn] mid-loop refresh failed:', e) }
+        }
       } catch (err) {
         console.error(`[spawn] watchlist ${wl.id} failed:`, err)
         failed++
@@ -164,7 +284,6 @@ export function AnalystView({ onOpenPrediction, mutationVersion = 0 }: {
       done: activeWls.length, total: activeWls.length, currentName: null,
       totalsCreated, totalsMerged, totalsNewsFetched, totalsNewsInserted, failed, finished: true,
     })
-    // 末尾闪存
     const parts = [
       `✓ 处理 ${activeWls.length - failed}/${activeWls.length} 个监视清单`,
       `抓 ${totalsNewsFetched} 条新闻(${totalsNewsInserted} 新)`,
@@ -173,35 +292,34 @@ export function AnalystView({ onOpenPrediction, mutationVersion = 0 }: {
     ]
     if (failed > 0) parts.push(`⚠ 失败 ${failed}`)
     setSpawnFlash(parts.join(' · '))
-    // 刷新列表
     try {
       const fresh = await listPredictions({ status: 'PROPOSED', limit: 100, includeLatestSnapshot: true, hasEvidence: true })
       setPredictions(fresh)
     } catch (e) { console.error(e) }
+    // 流水线面板保留显示;只清进度条和 flash
     setTimeout(() => { setSpawnProgress(null); setSpawnFlash(null) }, 8000)
   }
 
-  const onSaveFreshness = async () => {
-    const n = parseInt(freshnessDraft, 10)
-    if (!Number.isFinite(n) || n < 1 || n > 365) {
-      alert('时效窗口必须是 1-365 之间的整数(天)')
-      return
-    }
-    setFreshnessSaving(true)
-    try {
-      const r = await setNewsFreshnessDays(n)
-      setFreshnessDays(r.value)
-    } catch (e) {
-      alert((e as Error).message)
-    } finally {
-      setFreshnessSaving(false)
+  // Plan-PP:effective followed V — 含 level-1 父的展开(所有 level-2 子被纳入)
+  const effectiveFollowedV = new Set<string>()
+  for (const id of followedVIds) {
+    effectiveFollowedV.add(id)
+    const v = vMap.get(id)
+    if (v && v.level === 1) {
+      for (const child of vMap.values()) {
+        if (child.level === 2 && child.parentId === id) effectiveFollowedV.add(child.id)
+      }
     }
   }
 
-  // (β) m5 UI 对齐:list 已是 PROPOSED;前端只做 watchlist 侧栏过滤,不再二次过滤 confidence
-  const filtered = activeWatchlist === 'all'
+  // (β) m5 UI 对齐:list 已是 PROPOSED;前端只做 watchlist 侧栏过滤
+  const filteredByWl = activeWatchlist === 'all'
     ? predictions
     : predictions.filter(p => p.sourceKind === 'WATCHLIST' && p.sourceId === activeWatchlist)
+  // Plan-PP:默认按用户关注的 V 过滤;勾「显示全部」可绕过
+  const filtered = filterByFollowed && effectiveFollowedV.size > 0
+    ? filteredByWl.filter(p => effectiveFollowedV.has(p.vehicleClassId))
+    : filteredByWl
 
   // KPI 围绕"待我推送"的工作流:总待审 / 已评 / 建议优先 / 0 置信
   const kpiItems = [
@@ -257,10 +375,30 @@ export function AnalystView({ onOpenPrediction, mutationVersion = 0 }: {
               onClick={() => setActiveWatchlist(w.id)}
               title={w.name}
             >
-              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'flex', alignItems: 'center', gap: 8 }}>
+              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'flex', alignItems: 'center', gap: 8, flex: 1 }}>
                 <Icon name="pin" size={12} />
                 <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{w.name}</span>
               </span>
+              <button
+                title={w.keywords.length > 0
+                  ? `编辑关键词(显式 ${w.keywords.length} 个)`
+                  : '编辑关键词(走派生 fallback)'}
+                onClick={(e) => { e.stopPropagation(); setKeywordsModalWl(w) }}
+                style={{
+                  marginRight: 6,
+                  padding: '2px 6px',
+                  fontSize: 10,
+                  background: w.keywords.length > 0
+                    ? 'var(--c-accent, #4ea1ff)33'
+                    : 'transparent',
+                  color: w.keywords.length > 0 ? 'var(--c-accent, #4ea1ff)' : 'var(--c-muted)',
+                  border: '1px solid var(--c-border, #2a2f3a)',
+                  borderRadius: 3,
+                  cursor: 'pointer',
+                }}
+              >
+                🔍 {w.keywords.length || '派生'}
+              </button>
               <span className="sidebar__item-meta">
                 {predictions.filter(p => p.sourceKind === 'WATCHLIST' && p.sourceId === w.id).length}
               </span>
@@ -305,31 +443,19 @@ export function AnalystView({ onOpenPrediction, mutationVersion = 0 }: {
           title="分析师工作台"
           sub="监视新闻信号 → 审证据 → 调置信度 → 推送给决策者"
           actions={<>
-            <span style={{
+            <label style={{
               display: 'inline-flex', alignItems: 'center', gap: 6,
-              padding: '4px 10px', borderRadius: 6,
-              background: 'var(--c-panel-2)', fontSize: 'var(--fs-2)', color: 'var(--c-muted)',
-            }}>
-              新闻时效:
+              fontSize: 'var(--fs-2)', color: 'var(--c-muted)',
+              padding: '4px 10px',
+              background: 'var(--c-panel-2)', borderRadius: 6,
+            }} title="默认只看我关注的车型;关掉看全部">
               <input
-                type="number" min={1} max={365}
-                value={freshnessDraft}
-                onChange={e => setFreshnessDraft(e.target.value)}
-                disabled={freshnessSaving || freshnessDays === null}
-                style={{
-                  width: 50, padding: '2px 6px', textAlign: 'right',
-                  background: 'transparent', border: '1px solid var(--c-border, #2a2f3a)',
-                  borderRadius: 4, color: 'inherit',
-                }}
+                type="checkbox"
+                checked={filterByFollowed}
+                onChange={e => setFilterByFollowed(e.target.checked)}
               />
-              天
-              <Btn
-                disabled={freshnessSaving || freshnessDays === null || freshnessDraft === String(freshnessDays)}
-                onClick={onSaveFreshness}
-              >
-                {freshnessSaving ? '保存中…' : '保存'}
-              </Btn>
-            </span>
+              只看关注车型({effectiveFollowedV.size})
+            </label>
             <Btn
               disabled={spawnProgress !== null && !spawnProgress.finished}
               onClick={onSpawnAll}
@@ -342,12 +468,51 @@ export function AnalystView({ onOpenPrediction, mutationVersion = 0 }: {
             >
               <Icon name="refresh" size={12} />立即重算{filtered.length > 0 ? ` (${filtered.length})` : ''}
             </Btn>
+            <Btn
+              variant="primary"
+              disabled={pushProgress !== null && !pushProgress.finished || selectedIds.size === 0}
+              onClick={onBatchPush}
+              title={selectedIds.size === 0 ? '请先在表格里勾选要推送的预测' : `批量推送 ${selectedIds.size} 条给决策者`}
+            >
+              ✈︎ 批量推送{selectedIds.size > 0 ? ` (${selectedIds.size})` : ''}
+            </Btn>
+            <Btn
+              variant="danger"
+              disabled={deleteProgress !== null && !deleteProgress.finished || selectedIds.size === 0}
+              onClick={onBatchDelete}
+              title={selectedIds.size === 0 ? '请先在表格里勾选要删除的预测' : `批量删除 ${selectedIds.size} 条(硬删,不可恢复)`}
+            >
+              🗑 批量删除{selectedIds.size > 0 ? ` (${selectedIds.size})` : ''}
+            </Btn>
             <Btn variant="primary" onClick={() => setTaskCardModalOpen(true)}>
               <Icon name="plus" size={12} />新建任务卡
             </Btn>
           </>}
         />
         <div className="workspace__body">
+          {/* Plan-PP:阈值编辑器 + 按 watchlist 的关键词 / 名称 / +/- 操作(即时保存) */}
+          <ThresholdEditor
+            watchlists={watchlists}
+            onWatchListUpdated={(updated) => {
+              setWatchlists(prev => prev.map(w => w.id === updated.id ? updated : w))
+            }}
+            onWatchListDeleted={(id) => {
+              setWatchlists(prev => prev.filter(w => w.id !== id))
+            }}
+            onAddWatchList={() => setNewModalOpen(true)}
+          />
+          {/* Plan-PP:流水线漏斗(最近一次 spawn 的 6 阶段 trace,多 wl 各一组) */}
+          {pipelineStages.map((p, i) => {
+            const wl = watchlists.find(w => w.id === p.wlId) ?? null
+            return (
+              <PipelinePanel
+                key={i}
+                title={p.wlName}
+                stages={p.stages}
+                onEditKeywords={wl ? () => setKeywordsModalWl(wl) : undefined}
+              />
+            )
+          })}
           {/* 📡 生成预测进度面板(spawn-from-news 串行处理 active watchlist)*/}
           {spawnProgress && !spawnProgress.finished && (
             <div style={{
@@ -390,6 +555,74 @@ export function AnalystView({ onOpenPrediction, mutationVersion = 0 }: {
               borderRadius: 6, fontSize: 'var(--fs-2)',
             }}>
               {spawnFlash}
+            </div>
+          )}
+          {deleteProgress && (
+            <div style={{
+              marginBottom: 'var(--sp-4)', padding: 'var(--sp-3) var(--sp-4)',
+              background: 'var(--c-panel-2)', borderRadius: 6,
+              border: '1px solid var(--c-bad, #ef4444)',
+              display: 'flex', alignItems: 'center', gap: 'var(--sp-3)',
+            }}>
+              <span style={{ fontSize: 'var(--fs-3)', fontWeight: 600 }}>
+                {deleteProgress.finished
+                  ? `✓ 删除完成 ${deleteProgress.total - deleteProgress.failed}/${deleteProgress.total}`
+                  : `🗑 批量删除中 ${deleteProgress.done}/${deleteProgress.total}`}
+              </span>
+              <div style={{
+                flex: 1, height: 6, background: 'var(--c-border, #2a2f3a)', borderRadius: 3, overflow: 'hidden',
+              }}>
+                <div style={{
+                  width: `${(deleteProgress.done / Math.max(1, deleteProgress.total)) * 100}%`,
+                  height: '100%',
+                  background: deleteProgress.failed > 0 ? 'var(--c-warn, #fbbf24)' : 'var(--c-bad, #ef4444)',
+                  transition: 'width 200ms ease',
+                }} />
+              </div>
+              {deleteProgress.currentId && (
+                <span style={{ fontSize: 'var(--fs-2)', color: 'var(--c-muted)', fontFamily: 'monospace' }}>
+                  当前 [{deleteProgress.currentId.slice(0, 8)}]
+                </span>
+              )}
+              {deleteProgress.failed > 0 && (
+                <span style={{ fontSize: 'var(--fs-2)', color: 'var(--c-warn, #fbbf24)' }}>
+                  ⚠ 失败 {deleteProgress.failed}
+                </span>
+              )}
+            </div>
+          )}
+          {pushProgress && (
+            <div style={{
+              marginBottom: 'var(--sp-4)', padding: 'var(--sp-3) var(--sp-4)',
+              background: 'var(--c-panel-2)', borderRadius: 6,
+              border: '1px solid var(--c-accent, #4ea1ff)',
+              display: 'flex', alignItems: 'center', gap: 'var(--sp-3)',
+            }}>
+              <span style={{ fontSize: 'var(--fs-3)', fontWeight: 600 }}>
+                {pushProgress.finished
+                  ? `✓ 推送完成 ${pushProgress.total - pushProgress.failed}/${pushProgress.total}`
+                  : `✈︎ 批量推送中 ${pushProgress.done}/${pushProgress.total}`}
+              </span>
+              <div style={{
+                flex: 1, height: 6, background: 'var(--c-border, #2a2f3a)', borderRadius: 3, overflow: 'hidden',
+              }}>
+                <div style={{
+                  width: `${(pushProgress.done / Math.max(1, pushProgress.total)) * 100}%`,
+                  height: '100%',
+                  background: pushProgress.failed > 0 ? 'var(--c-warn, #fbbf24)' : 'var(--c-accent, #4ea1ff)',
+                  transition: 'width 200ms ease',
+                }} />
+              </div>
+              {pushProgress.currentId && (
+                <span style={{ fontSize: 'var(--fs-2)', color: 'var(--c-muted)', fontFamily: 'monospace' }}>
+                  当前 [{pushProgress.currentId.slice(0, 8)}]
+                </span>
+              )}
+              {pushProgress.failed > 0 && (
+                <span style={{ fontSize: 'var(--fs-2)', color: 'var(--c-warn, #fbbf24)' }}>
+                  ⚠ 失败 {pushProgress.failed}
+                </span>
+              )}
             </div>
           )}
           {batchProgress && (
@@ -443,6 +676,9 @@ export function AnalystView({ onOpenPrediction, mutationVersion = 0 }: {
             <PredictionTable
               rows={tableRows}
               onOpen={onOpenPrediction}
+              selectedIds={selectedIds}
+              onToggleSelect={onToggleSelect}
+              onToggleSelectAll={onToggleSelectAll}
               onEdit={(r) => setEditingRow(r)}
               onDelete={async (r) => {
                 if (!window.confirm(`删除预测 [${r.id.slice(0,8)}] ${r.vehicleClassName}/${r.taskClassName}/${r.windowDate} ${r.windowHalf}?\n硬删 — 不可恢复(级联删除关联快照/证据)。`)) return
@@ -473,6 +709,15 @@ export function AnalystView({ onOpenPrediction, mutationVersion = 0 }: {
         open={taskCardModalOpen}
         onClose={() => setTaskCardModalOpen(false)}
         onCreated={refreshTaskCards}
+      />
+
+      <KeywordsModal
+        open={!!keywordsModalWl}
+        watchlist={keywordsModalWl}
+        onClose={() => setKeywordsModalWl(null)}
+        onSaved={(updated) => {
+          setWatchlists(prev => prev.map(w => w.id === updated.id ? updated : w))
+        }}
       />
 
       <EditPredictionModal

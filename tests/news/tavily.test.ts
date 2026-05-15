@@ -35,6 +35,8 @@ describe('TavilySearchAdapter', () => {
 
     const adapter = new TavilySearchAdapter()
     const hits = await adapter.query(['广州', '专项'])
+    // per-keyword:2 keywords → 2 调用,但同 URL 去重 → 1 hit
+    expect(calls.length).toBeGreaterThanOrEqual(2)
     expect(hits).toHaveLength(1)
     expect(hits[0]!.title).toBe('广州专项整治')
     expect(hits[0]!.url).toBe('https://news.example.com/a')
@@ -44,7 +46,8 @@ describe('TavilySearchAdapter', () => {
 
     const body = JSON.parse(calls[0].init.body)
     expect(body.api_key).toBe('tvly-test-key')
-    expect(body.query).toBe('广州 专项')
+    // Plan-PP fix5: quote-boost 自动包裹引号
+    expect(body.query).toBe('"广州"')
   })
 
   test('no API key: returns empty + warn, no fetch call', async () => {
@@ -65,8 +68,9 @@ describe('TavilySearchAdapter', () => {
     let callCount = 0
     globalThis.fetch = (async () => {
       callCount++
+      // 带 published_date 跳过 HTML 兜底,callCount 严格等于 Tavily POST 次数
       return new Response(JSON.stringify({
-        results: [{ title: `r${callCount}`, url: 'https://x/', content: '', score: 0.1 }],
+        results: [{ title: `r${callCount}`, url: 'https://x/', content: '', score: 0.1, published_date: '2026-05-09' }],
       }), { status: 200 })
     }) as any
 

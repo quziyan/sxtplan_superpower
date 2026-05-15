@@ -16,6 +16,8 @@ import {
 } from '@/lib/prediction-api'
 import { listVehicleClasses, listTaskClasses, type VehicleClass, type TaskClass } from '@/lib/taxonomy-api'
 import { listRegions, type RegionListItem } from '@/lib/region-api'
+import { RegionMapModal } from './RegionMapModal'
+import { isExpiredWindow } from './PredictionTable'
 
 // Plan-C T28 / ISC-36 review fixes:
 //   1. After approve / reject / cancel, the local `data` state must be
@@ -44,6 +46,8 @@ export function PredictionDetail({
   const [vMap, setVMap] = useState<Map<string, VehicleClass>>(new Map())
   const [tMap, setTMap] = useState<Map<string, TaskClass>>(new Map())
   const [regionMap, setRegionMap] = useState<Map<string, RegionListItem>>(new Map())
+  // 区域地图弹窗:点击区域名 → 打开 polygon 浮窗
+  const [mapModalOpen, setMapModalOpen] = useState(false)
 
   useEffect(() => {
     getPredictionDetail(predictionId).then(setData).catch(e => setError((e as Error).message))
@@ -196,7 +200,20 @@ export function PredictionDetail({
           </div>
           <div className="inbox-card__field">
             <span className="inbox-card__field-label">区域</span>
-            <span className="inbox-card__field-val">{regionMap.get(p.regionId)?.name ?? p.regionId.slice(-8)} v{p.regionVersion}</span>
+            <button
+              type="button"
+              className="inbox-card__field-val"
+              onClick={() => setMapModalOpen(true)}
+              title="点击查看区域 polygon"
+              style={{
+                background: 'none', border: 'none', padding: 0,
+                color: 'var(--c-accent, #4ea1ff)', cursor: 'pointer',
+                textDecoration: 'underline dotted', textUnderlineOffset: 2,
+                font: 'inherit', textAlign: 'left',
+              }}
+            >
+              📍 {regionMap.get(p.regionId)?.name ?? p.regionId.slice(-8)}
+            </button>
           </div>
           <div className="inbox-card__field">
             <span className="inbox-card__field-label">窗口</span>
@@ -235,10 +252,21 @@ export function PredictionDetail({
       </section>
       <section style={{ display: 'flex', gap: 'var(--sp-2)', alignItems: 'center', flexWrap: 'wrap' }}>
         {/* (β) m5 UI:ANALYST 在 PROPOSED 上推送给决策者;DECIDER 在 VALIDATED 上批准/驳回 */}
+        {/* Plan-PP fix12:windowDate 早于今天 → 过期,不可推送 */}
         {p.status === 'PROPOSED' && activeRole === 'ANALYST' && (
-          <Btn variant="primary" disabled={busy || recomputing === 'pending'} onClick={onValidate}>
-            ✈︎ 推送给决策者
-          </Btn>
+          (() => {
+            const expired = isExpiredWindow(p.windowDate.slice(0, 10), p.windowHalf)
+            return (
+              <Btn
+                variant="primary"
+                disabled={busy || recomputing === 'pending' || expired}
+                onClick={onValidate}
+                title={expired ? '该预测窗口已过期(早于今天),不可推送' : ''}
+              >
+                {expired ? '⌛ 已过期 不可推送' : '✈︎ 推送给决策者'}
+              </Btn>
+            )
+          })()
         )}
         {(p.status === 'PROPOSED' || p.status === 'VALIDATED') && activeRole === 'DECIDER' && (
           <>
@@ -286,6 +314,13 @@ export function PredictionDetail({
           </span>
         )}
       </section>
+      <RegionMapModal
+        open={mapModalOpen}
+        regionId={p.regionId}
+        regionVersion={p.regionVersion}
+        regionName={regionMap.get(p.regionId)?.name ?? null}
+        onClose={() => setMapModalOpen(false)}
+      />
     </div>
   )
 }

@@ -8,6 +8,7 @@ import { AnalystView } from '@/routes/analyst/AnalystView'
 import { DecisionView } from '@/routes/decision/DecisionView'
 import { ReviewerView } from '@/routes/reviewer/ReviewerView'
 import { ScheduleView } from '@/routes/schedule/ScheduleView'
+import { AdminView } from '@/routes/admin/AdminView'
 
 export default function App() {
   const { state, refresh, switchRole, logout } = useAuth()
@@ -35,11 +36,11 @@ export default function App() {
 
   const onTabChange = (k: TabKey) => {
     setActiveTab(k)
-    if (k !== 'SCHEDULE') {
+    if (k !== 'SCHEDULE' && k !== 'ADMIN') {
       // 切到一个真实 role tab → 同步切角色态(走原 switchRole 流程)
       switchRole(k)
     }
-    // SCHEDULE: 不动 me.activeRoleKey,纯前端视图切换
+    // SCHEDULE / ADMIN: 不动 me.activeRoleKey,纯前端视图切换
   }
 
   return (
@@ -57,6 +58,7 @@ export default function App() {
         {activeTab === 'DECIDER'  && <DecisionView onOpenPrediction={setOpenPrediction} mutationVersion={refreshKey} />}
         {activeTab === 'REVIEWER' && <ReviewerView />}
         {activeTab === 'SCHEDULE' && <ScheduleView onOpenPrediction={setOpenPrediction} mutationVersion={refreshKey} />}
+        {activeTab === 'ADMIN' && <AdminView />}
         {!activeTab && (
           <div className="empty" style={{ marginTop: 'var(--sp-8)' }}>
             请在顶部选择一个视图。可用角色:{me.availableRoles.join(', ') || '无'}。

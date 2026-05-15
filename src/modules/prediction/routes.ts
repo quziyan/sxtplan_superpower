@@ -307,6 +307,7 @@ export function predictionRoutes(db: Db, deps: PredictionRouteDeps = {}) {
   app.post('/spawn-from-news/:watchlistId', authRequired(db),
     roleRequired('ANALYST'),
     async (c) => {
+      const auth = c.get('auth')
       const watchlistId = c.req.param('watchlistId')
       const [wl] = await db.select().from(watchLists).where(eq(watchLists.id, watchlistId))
       if (!wl) throw NotFound(`watchlist ${watchlistId} not found`)
@@ -327,15 +328,18 @@ export function predictionRoutes(db: Db, deps: PredictionRouteDeps = {}) {
         onlyWatchlistId: wl.id,
       })
 
-      // 步骤 ②③:并发 drain extract(SPAWN_EXTRACT_CONCURRENCY 控速,避免 LLM rate)
+      // Plan-PP step 3:extract 用 rerankedHits(SearchHit)直接调,不再依赖
+      // ingest 的 newsId — extract 内部需要 newsId 时会 ingestHit 自助 find-or-create。
+      // 这样 extract 与 ingest 在概念上独立(虽然 tickNewsIngest 已经同步跑过 ingest stage)。
+      const tExtract0 = performance.now()
       let created = 0, merged = 0, llmDegraded = 0, extractAttempted = 0
-      for (let i = 0; i < ingest.newlyInsertedNewsIds.length; i += SPAWN_EXTRACT_CONCURRENCY) {
-        const batch = ingest.newlyInsertedNewsIds.slice(i, i + SPAWN_EXTRACT_CONCURRENCY)
-        const results = await Promise.all(batch.map(async (newsId) => {
+      for (let i = 0; i < ingest.rerankedHits.length; i += SPAWN_EXTRACT_CONCURRENCY) {
+        const batch = ingest.rerankedHits.slice(i, i + SPAWN_EXTRACT_CONCURRENCY)
+        const results = await Promise.all(batch.map(async ({ hit }) => {
           try {
-            return await runNewsExtractAgent(db, { newsId })
+            return await runNewsExtractAgent(db, { hit, userId: auth.user.id })
           } catch (err) {
-            console.warn(`[spawn-from-news] extract failed for news=${newsId}:`, (err as Error).message)
+            console.warn(`[spawn-from-news] extract failed for url=${hit.url}:`, (err as Error).message)
             return null
           }
         }))
@@ -347,6 +351,20 @@ export function predictionRoutes(db: Db, deps: PredictionRouteDeps = {}) {
           if (r.llmDegraded) llmDegraded++
         }
       }
+      const tExtract1 = performance.now()
+
+      // Plan-PP step 5:extract.in 改为 rerankedHits 长度(实际跑 LLM 的条数,
+      // 而非 ingest 后的 newsId 数)— 反映"抽取不被入库去重阻塞"语义
+      const stages = [...ingest.stages, {
+        name: 'extract' as const,
+        watchlistName: wl.name,
+        in: ingest.rerankedHits.length,
+        out: created + merged,
+        durationMs: Math.round(tExtract1 - tExtract0),
+        params: { concurrency: SPAWN_EXTRACT_CONCURRENCY, attempted: extractAttempted, llmDegraded },
+        dropped: [],
+        kept: [],
+      }]
 
       return c.json({
         ok: true,
@@ -358,6 +376,7 @@ export function predictionRoutes(db: Db, deps: PredictionRouteDeps = {}) {
         predictionsCreated: created,
         predictionsMerged: merged,
         llmDegraded,
+        stages,
       })
     },
   )
@@ -366,6 +385,7 @@ export function predictionRoutes(db: Db, deps: PredictionRouteDeps = {}) {
   app.post('/spawn-from-news', authRequired(db),
     roleRequired('ANALYST'),
     async (c) => {
+      const auth = c.get('auth')
       const active = await db.select().from(watchLists).where(eq(watchLists.isActive, true))
       const summary = {
         watchlistsProcessed: 0, newsFetched: 0, newsInserted: 0,
@@ -375,6 +395,7 @@ export function predictionRoutes(db: Db, deps: PredictionRouteDeps = {}) {
           watchlistId: string; name: string
           newsFetched: number; newsInserted: number; extracted: number
           created: number; merged: number; error?: string
+          stages?: import('@/scheduler/workers/news-ingest').StageTrace[]
         }>,
       }
       for (const wl of active) {
@@ -391,11 +412,13 @@ export function predictionRoutes(db: Db, deps: PredictionRouteDeps = {}) {
           wlReport.newsInserted = ingest.newsInserted
           summary.newsFetched += ingest.newsFetched
           summary.newsInserted += ingest.newsInserted
-          // 同上 concurrency 3
-          for (let i = 0; i < ingest.newlyInsertedNewsIds.length; i += SPAWN_EXTRACT_CONCURRENCY) {
-            const batch = ingest.newlyInsertedNewsIds.slice(i, i + SPAWN_EXTRACT_CONCURRENCY)
-            const results = await Promise.all(batch.map(async (nId) => {
-              try { return await runNewsExtractAgent(db, { newsId: nId }) }
+          const tExtract0 = performance.now()
+          let llmDegradedHere = 0
+          // Plan-PP step 3:用 rerankedHits(SearchHit)而非 processedNewsIds
+          for (let i = 0; i < ingest.rerankedHits.length; i += SPAWN_EXTRACT_CONCURRENCY) {
+            const batch = ingest.rerankedHits.slice(i, i + SPAWN_EXTRACT_CONCURRENCY)
+            const results = await Promise.all(batch.map(async ({ hit }) => {
+              try { return await runNewsExtractAgent(db, { hit, userId: auth.user.id }) }
               catch { return null }
             }))
             for (const r of results) {
@@ -403,9 +426,24 @@ export function predictionRoutes(db: Db, deps: PredictionRouteDeps = {}) {
               if (r === null) continue
               wlReport.created += r.created; wlReport.merged += r.merged
               summary.predictionsCreated += r.created; summary.predictionsMerged += r.merged
-              if (r.llmDegraded) summary.llmDegraded++
+              if (r.llmDegraded) { summary.llmDegraded++; llmDegradedHere++ }
             }
           }
+          const tExtract1 = performance.now()
+          wlReport.stages = [...ingest.stages, {
+            name: 'extract' as const,
+            watchlistName: wl.name,
+            in: ingest.rerankedHits.length,
+            out: wlReport.created + wlReport.merged,
+            durationMs: Math.round(tExtract1 - tExtract0),
+            params: {
+              concurrency: SPAWN_EXTRACT_CONCURRENCY,
+              attempted: wlReport.extracted,
+              llmDegraded: llmDegradedHere,
+            },
+            dropped: [],
+            kept: [],
+          }]
           summary.watchlistsProcessed++
         } catch (err) {
           wlReport.error = (err as Error).message

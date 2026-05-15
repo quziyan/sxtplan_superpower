@@ -1,0 +1,46 @@
+# Plan-PP docker:build context 精简,大头是 node_modules + tests + docs
+**/node_modules
+**/dist
+**/.turbo
+**/.next
+
+# git
+.git
+.gitignore
+.gitattributes
+
+# 编辑器 / OS
+.vscode
+.idea
+.DS_Store
+*.swp
+
+# 日志 + 临时
+*.log
+/tmp
+/private/tmp
+
+# 测试 + benchmark
+tests
+benchmarks
+
+# 文档(运行时不需要)
+docs
+prds
+MEMORY
+*.md
+!README.docker.md
+
+# env 文件不入镜像 — 走 env_file 注入
+.env
+.env.*
+!.env.docker.example
+
+# CI / IDE 配置
+.github
+.husky
+biome.json
+
+# 旧 docker-compose volume(不需要)
+cnp-pg-data
+cnp-redis-data

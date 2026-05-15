@@ -1,5 +1,6 @@
 import { sql } from 'drizzle-orm'
-import { check, index, integer, pgTable, text, timestamp, uniqueIndex, uuid } from 'drizzle-orm/pg-core'
+import { check, index, integer, pgTable, primaryKey, text, timestamp, uniqueIndex, uuid } from 'drizzle-orm/pg-core'
+import { users } from './user'
 
 export const vehicleClasses = pgTable(
   'vehicle_classes',
@@ -62,5 +63,21 @@ export const taskEdgeTags = pgTable(
   (t) => [uniqueIndex('task_tag_unique').on(t.taskClassId, t.tag)]
 )
 
+// Plan-PP — 每个用户关注的车辆类型集合(可关注 level-1 或 level-2)
+export const userFollowedVehicleClasses = pgTable(
+  'user_followed_vehicle_classes',
+  {
+    userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+    vehicleClassId: uuid('vehicle_class_id').notNull().references(() => vehicleClasses.id, { onDelete: 'cascade' }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.userId, t.vehicleClassId] }),
+    index('ufvc_user_idx').on(t.userId),
+    index('ufvc_vehicle_idx').on(t.vehicleClassId),
+  ]
+)
+
 export type VehicleClass = typeof vehicleClasses.$inferSelect
 export type TaskClass = typeof taskClasses.$inferSelect
+export type UserFollowedVehicleClass = typeof userFollowedVehicleClasses.$inferSelect

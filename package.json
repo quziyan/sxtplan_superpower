@@ -22,7 +22,12 @@
     "demo:real-pipeline": "bun scripts/run-real-pipeline.ts",
     "verify:loop": "bun scripts/verify-full-loop.ts",
     "scheduler": "bun src/scheduler/workers.ts",
-    "scheduler:dev": "bun --watch src/scheduler/workers.ts"
+    "scheduler:dev": "bun --watch src/scheduler/workers.ts",
+    "docker:build": "docker compose --env-file .env.docker build",
+    "docker:up": "docker compose --env-file .env.docker up -d",
+    "docker:down": "docker compose --env-file .env.docker down",
+    "docker:logs": "docker compose logs -f app scheduler",
+    "docker:ps": "docker compose ps"
   },
   "dependencies": {
     "@hono/zod-validator": "^0.4.0",

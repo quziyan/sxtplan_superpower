@@ -14,31 +14,35 @@ function hit(opts: Partial<SearchHit>): SearchHit {
 }
 
 describe('relevance — filterHits (rule-based)', () => {
-  test('drops hits with no CJK in title and snippet', () => {
+  test('Plan-PP fix4: 严格中文域门禁 — 非 .cn 系且非白名单一律丢', () => {
     const r = filterHits([
-      hit({ title: '广州治安巡逻', snippet: 'foo bar' }),                  // CJK in title → keep
-      hit({ title: 'San Fernando crime spree', snippet: 'no chinese' }),  // no CJK → drop
-      hit({ title: 'LA crime', snippet: '广州交警' }),                       // CJK in snippet → keep
+      hit({ title: '广州治安巡逻', url: 'https://news.gd.gov.cn/a' }),     // .gov.cn → keep
+      hit({ title: '广州 news', url: 'https://news.sina.com.cn/x' }),       // 白名单 → keep
+      hit({ title: '广州 news en', url: 'https://example.com/y' }),         // 非中文域 → drop
+      hit({ title: '广州 mixed', url: 'https://thepaper.cn/z' }),            // .cn TLD → keep
     ])
-    expect(r.length).toBe(2)
-    expect(r[0]!.title).toContain('广州')
+    expect(r.kept.length).toBe(3)
+    expect(r.dropped.length).toBe(1)
+    expect(r.dropped[0]!.reason).toBe('non-chinese-domain')
   })
 
   test('drops English domain blocklist', () => {
     const r = filterHits([
-      hit({ title: '广州 LAPD report', url: 'https://www.cbsnews.com/x' }),  // CJK + blocked domain
+      hit({ title: '广州 LAPD report', url: 'https://www.cbsnews.com/x' }),
       hit({ title: '广州交警', url: 'https://news.gd.gov.cn/y' }),
     ])
-    expect(r.length).toBe(1)
-    expect(r[0]!.url).toContain('gd.gov.cn')
+    expect(r.kept.length).toBe(1)
+    expect(r.kept[0]!.url).toContain('gd.gov.cn')
+    expect(r.dropped[0]!.reason).toBe('blocklist')
   })
 
   test('drops too-short titles', () => {
     const r = filterHits([
-      hit({ title: '广', url: 'https://x.cn/1' }),  // CJK ✓ but title=1 char,< 4
+      hit({ title: '广', url: 'https://x.cn/1' }),
       hit({ title: '广州治安巡逻', url: 'https://x.cn/2' }),
     ])
-    expect(r.length).toBe(1)
+    expect(r.kept.length).toBe(1)
+    expect(r.dropped[0]!.reason).toBe('short-title')
   })
 
   test('drops www. prefix correctly when matching blocklist', () => {
@@ -47,8 +51,8 @@ describe('relevance — filterHits (rule-based)', () => {
       hit({ title: '广州 news', url: 'https://cbsnews.com/abc' }),
       hit({ title: '广州 news', url: 'https://news.example.cn/abc' }),
     ])
-    expect(r.length).toBe(1)
-    expect(r[0]!.url).toContain('example.cn')
+    expect(r.kept.length).toBe(1)
+    expect(r.kept[0]!.url).toContain('example.cn')
   })
 })
 

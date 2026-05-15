@@ -1,145 +1,54 @@
-import { useEffect, useState } from 'react'
-import { listTaskClasses, listVehicleClasses, type TaskClass, type VehicleClass } from '@/lib/taxonomy-api'
-import { listRegions, type RegionListItem } from '@/lib/region-api'
+import { useState } from 'react'
 import { createWatchList } from '@/lib/watchlist-api'
 
-// Plan-C T31 / ISC-39: 新建监视清单 modal for ANALYST role.
-// Form: name + V (vehicleClass) + T (taskClass) + R (named region) + K range
-// (kMin / kMax, both 0..60, kMin <= kMax). Mirrors the modal pattern used by
-// CancelButton (T28) and the retrospective override modal (T29) — same
-// .modal-backdrop / .modal / .modal__actions / .alert--error CSS classes.
-//
-// On submit: validate inline, POST /watchlists, fire onCreated so the parent
-// can refetch, then close + reset state. K range uses two number inputs
-// because HTML has no native dual-thumb slider and pulling in a slider lib
-// for one form would be over-engineering.
-
-type Option = { value: string; label: string }
-
-// Presents level-1 entries first, then their level-2 children indented under
-// each parent. Falls back to a flat alphabetical list if level/parent metadata
-// is missing for some rows.
-function buildClassOptions(rows: ReadonlyArray<VehicleClass | TaskClass>): Option[] {
-  const level1 = rows.filter((r) => r.level === 1)
-  const level2 = rows.filter((r) => r.level === 2)
-  const orphans = rows.filter((r) => r.level !== 1 && r.level !== 2)
-  const out: Option[] = []
-  for (const p of level1) {
-    out.push({ value: p.id, label: p.name })
-    const kids = level2.filter((c) => c.parentId === p.id)
-    for (const k of kids) {
-      out.push({ value: k.id, label: `  └ ${k.name}` })
-    }
-  }
-  // Level-2 rows whose parent is missing from the response — list them flat
-  // at the bottom rather than dropping them silently.
-  const seen = new Set(out.map((o) => o.value))
-  for (const r of [...level2, ...orphans]) {
-    if (!seen.has(r.id)) out.push({ value: r.id, label: r.name })
-  }
-  return out
-}
-
-function buildRegionOptions(rows: ReadonlyArray<RegionListItem>): Option[] {
-  return rows.map((r) => ({
-    value: `${r.id}@${r.version}`,
-    label: r.name ?? `(未命名 ${r.id.slice(0, 8)})`,
-  }))
-}
-
+/**
+ * Plan-PP fix:简化为「监视清单 = 名称 + 搜索关键词」。V/T/R/K 不暴露给用户,
+ * 后端用「通用车辆 / 通用任务 / 通用区域」兜底,K 默认 1-14 天。
+ *
+ * 表单字段:
+ *   - 名称(必填,1-100 字符)
+ *   - 搜索关键词(可选,≤20 个,每个 ≤60 字符;每行一个或逗号分隔;空 = 派生 fallback)
+ */
 export function NewWatchListModal({ open, onClose, onCreated }: {
   open: boolean
   onClose: () => void
   onCreated?: () => void
 }) {
   const [name, setName] = useState('')
-  const [vehicleClassId, setVehicleClassId] = useState('')
-  const [taskClassId, setTaskClassId] = useState('')
-  // regionPick encodes both id and current version as `${id}@${version}` so
-  // the backend createWatchList payload (which requires regionVersion) stays
-  // consistent with the row the analyst actually selected.
-  const [regionPick, setRegionPick] = useState('')
-  const [kMin, setKMin] = useState(1)
-  const [kMax, setKMax] = useState(7)
-
-  const [vehicleOpts, setVehicleOpts] = useState<Option[]>([])
-  const [taskOpts, setTaskOpts] = useState<Option[]>([])
-  const [regionOpts, setRegionOpts] = useState<Option[]>([])
-
-  const [loadingOpts, setLoadingOpts] = useState(false)
+  const [keywordsRaw, setKeywordsRaw] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  // Load taxonomy + region options each time the modal opens. Cheap (3 GETs,
-  // small payloads) and avoids stale dropdowns if the analyst created a new
-  // class/region in another tab between opens.
-  useEffect(() => {
-    if (!open) return
-    let cancelled = false
-    setLoadingOpts(true)
-    setError(null)
-    Promise.all([listVehicleClasses(), listTaskClasses(), listRegions()])
-      .then(([vs, ts, rs]) => {
-        if (cancelled) return
-        setVehicleOpts(buildClassOptions(vs))
-        setTaskOpts(buildClassOptions(ts))
-        setRegionOpts(buildRegionOptions(rs))
-      })
-      .catch((e: Error) => { if (!cancelled) setError(`加载选项失败:${e.message}`) })
-      .finally(() => { if (!cancelled) setLoadingOpts(false) })
-    return () => { cancelled = true }
-  }, [open])
-
   if (!open) return null
+
+  const parseKeywords = (): string[] =>
+    keywordsRaw.split(/[\n,，]/).map((s) => s.trim()).filter((s) => s.length > 0)
 
   const reset = () => {
     setName('')
-    setVehicleClassId('')
-    setTaskClassId('')
-    setRegionPick('')
-    setKMin(1)
-    setKMax(7)
+    setKeywordsRaw('')
     setError(null)
   }
-
   const close = () => {
     if (submitting) return
     reset()
     onClose()
   }
 
-  const validate = (): string | null => {
-    if (!name.trim()) return '请填写名称'
-    if (!vehicleClassId) return '请选择车辆类别'
-    if (!taskClassId) return '请选择任务类别'
-    if (!regionPick) return '请选择区域'
-    if (!Number.isInteger(kMin) || !Number.isInteger(kMax)) return 'K 范围必须为整数'
-    if (kMin < 0 || kMax < 0) return 'K 范围不可为负'
-    if (kMax > 60) return 'K 上限不超过 60'
-    if (kMin > kMax) return 'K 下限必须 ≤ K 上限'
-    return null
-  }
-
   const submit = async () => {
-    const err = validate()
-    if (err) { setError(err); return }
-    const [regionId, regionVersionRaw] = regionPick.split('@')
-    const regionVersion = Number.parseInt(regionVersionRaw ?? '', 10)
-    if (!regionId || !Number.isFinite(regionVersion) || regionVersion < 1) {
-      setError('区域选择无效')
-      return
-    }
+    const n = name.trim()
+    if (!n) { setError('请填写名称'); return }
+    if (n.length > 100) { setError('名称最长 100 字符'); return }
+    const kws = parseKeywords()
+    if (kws.length > 20) { setError('关键词最多 20 个'); return }
+    if (kws.some((k) => k.length > 60)) { setError('每个关键词最长 60 字符'); return }
+
     setSubmitting(true)
     setError(null)
     try {
       await createWatchList({
-        name: name.trim(),
-        vehicleClassId,
-        taskClassId,
-        regionId,
-        regionVersion,
-        kRangeMin: kMin,
-        kRangeMax: kMax,
+        name: n,
+        ...(kws.length > 0 ? { keywords: kws } : {}),
       })
       reset()
       onCreated?.()
@@ -156,7 +65,7 @@ export function NewWatchListModal({ open, onClose, onCreated }: {
       <div className="modal" onClick={(e) => e.stopPropagation()}>
         <h3 className="modal__title">新建监视清单</h3>
         <p className="text-muted">
-          按 V(车辆类别) / T(任务类别) / R(区域)/ K(预测窗口天数范围)定义监视范围。
+          名称 + 搜索关键词。关键词决定流水线第一阶段 Tavily 抓什么新闻;留空走 fallback。
         </p>
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sp-3)' }}>
@@ -167,88 +76,29 @@ export function NewWatchListModal({ open, onClose, onCreated }: {
               type="text"
               value={name}
               onChange={(e) => setName(e.target.value)}
-              placeholder="如:朝阳区-货运-高峰预测"
+              placeholder="如:天河区治安巡逻监视"
               disabled={submitting}
               autoFocus
             />
           </label>
 
           <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-            <span style={{ fontSize: 12, fontWeight: 600 }}>车辆类别 (V)</span>
-            <select
-              className="select"
-              value={vehicleClassId}
-              onChange={(e) => setVehicleClassId(e.target.value)}
-              disabled={submitting || loadingOpts}
-            >
-              <option value="">{loadingOpts ? '加载中…' : '请选择'}</option>
-              {vehicleOpts.map((o) => (
-                <option key={o.value} value={o.value}>{o.label}</option>
-              ))}
-            </select>
+            <span style={{ fontSize: 12, fontWeight: 600 }}>
+              搜索关键词
+              <span style={{ color: 'var(--c-muted)', fontWeight: 400, marginLeft: 6 }}>
+                每行一个 或 逗号分隔;空 → 派生 fallback
+              </span>
+            </span>
+            <textarea
+              className="input"
+              value={keywordsRaw}
+              onChange={(e) => setKeywordsRaw(e.target.value)}
+              disabled={submitting}
+              rows={5}
+              placeholder={'例如:\n天河 治安巡逻\n广州 公安\n街面巡查'}
+              style={{ fontFamily: 'monospace', resize: 'vertical' }}
+            />
           </label>
-
-          <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-            <span style={{ fontSize: 12, fontWeight: 600 }}>任务类别 (T)</span>
-            <select
-              className="select"
-              value={taskClassId}
-              onChange={(e) => setTaskClassId(e.target.value)}
-              disabled={submitting || loadingOpts}
-            >
-              <option value="">{loadingOpts ? '加载中…' : '请选择'}</option>
-              {taskOpts.map((o) => (
-                <option key={o.value} value={o.value}>{o.label}</option>
-              ))}
-            </select>
-          </label>
-
-          <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-            <span style={{ fontSize: 12, fontWeight: 600 }}>区域 (R, 命名区域)</span>
-            <select
-              className="select"
-              value={regionPick}
-              onChange={(e) => setRegionPick(e.target.value)}
-              disabled={submitting || loadingOpts}
-            >
-              <option value="">{loadingOpts ? '加载中…' : '请选择'}</option>
-              {regionOpts.map((o) => (
-                <option key={o.value} value={o.value}>{o.label}</option>
-              ))}
-            </select>
-          </label>
-
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-            <span style={{ fontSize: 12, fontWeight: 600 }}>K 范围(预测窗口天数)</span>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--sp-2)' }}>
-              <input
-                className="input"
-                type="number"
-                min={0}
-                max={60}
-                step={1}
-                value={kMin}
-                onChange={(e) => setKMin(Number.parseInt(e.target.value, 10) || 0)}
-                disabled={submitting}
-                style={{ width: 80 }}
-                aria-label="K 下限"
-              />
-              <span className="text-muted">至</span>
-              <input
-                className="input"
-                type="number"
-                min={0}
-                max={60}
-                step={1}
-                value={kMax}
-                onChange={(e) => setKMax(Number.parseInt(e.target.value, 10) || 0)}
-                disabled={submitting}
-                style={{ width: 80 }}
-                aria-label="K 上限"
-              />
-              <span className="text-muted" style={{ fontSize: 11 }}>天 (0–60)</span>
-            </div>
-          </div>
         </div>
 
         {error && <div className="alert alert--error" style={{ marginTop: 'var(--sp-3)' }}>{error}</div>}
@@ -260,7 +110,7 @@ export function NewWatchListModal({ open, onClose, onCreated }: {
           <button
             className="btn btn--primary"
             onClick={submit}
-            disabled={submitting || loadingOpts}
+            disabled={submitting}
           >
             {submitting ? '创建中…' : '创建'}
           </button>

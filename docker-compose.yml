@@ -1,6 +1,10 @@
+name: cnp
+
 services:
   postgres:
-    image: postgis/postgis:16-3.4
+    # Plan-PP docker:`postgis/postgis:16-3.4` 官方无 ARM 构建,改用社区多架构镜像
+    # imresamu/postgis 同步官方 PostGIS 版本,支持 linux/arm64 + linux/amd64
+    image: imresamu/postgis:16-3.4-alpine
     container_name: cnp-postgres
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-cnp}
@@ -28,6 +32,41 @@ services:
       interval: 5s
       timeout: 3s
       retries: 10
+
+  # Plan-PP docker:app 容器 — 前端 dist + 后端 Hono(同源,3000 端口)
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        # 前端 build-time 透传:把 VITE_AMAP_API_KEY 烤进 bundle,启用真实地图底图
+        VITE_AMAP_API_KEY: ${VITE_AMAP_API_KEY:-}
+    image: cnp:latest
+    container_name: cnp-app
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+    env_file:
+      - .env.docker
+    ports:
+      - "3000:3000"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3000/api/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 30s
+
+  # BullMQ worker 集群,共享同一 image,只是命令不同
+  scheduler:
+    image: cnp:latest
+    container_name: cnp-scheduler
+    depends_on:
+      app: { condition: service_healthy }   # 等 app 跑完 migrations
+      redis: { condition: service_healthy }
+    env_file:
+      - .env.docker
+    command: ["bun", "src/scheduler/workers.ts"]
 
 volumes:
   cnp-pg-data:

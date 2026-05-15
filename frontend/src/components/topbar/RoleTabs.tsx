@@ -1,8 +1,8 @@
 import { Icon, type IconName } from '../Icon'
 
 export type RoleKey = 'ANALYST' | 'DECIDER' | 'REVIEWER'
-// Schedule 不是 role,是一个全局视图 tab。TabKey 覆盖 role + 'SCHEDULE'。
-export type TabKey = RoleKey | 'SCHEDULE'
+// Schedule / Admin 不是 role,是全局视图 tab。TabKey 覆盖 role + 'SCHEDULE' + 'ADMIN'。
+export type TabKey = RoleKey | 'SCHEDULE' | 'ADMIN'
 
 export type TabDef = {
   key: TabKey
@@ -18,6 +18,7 @@ export const DEFAULT_TABS: TabDef[] = [
   { key: 'DECIDER',  label: '决策者', sub: '审批调度',      icon: 'check' },
   { key: 'REVIEWER', label: '复盘师', sub: '校准 + 沉淀',    icon: 'book' },
   { key: 'SCHEDULE', label: '日程',   sub: '全局视图',      icon: 'calendar', alwaysVisible: true },
+  { key: 'ADMIN',    label: '后台',   sub: '数据维护',      icon: 'settings', alwaysVisible: true },
 ]
 
 // 兼容旧名:DEFAULT_ROLES 仍可被既有引用使用,但新代码用 DEFAULT_TABS。
